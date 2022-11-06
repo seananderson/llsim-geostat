@@ -37,32 +37,79 @@ table(dobs$hbf) #< hooks between floats - how deep linear - important
 
 nrow(dobs)
 
+plot(dobs$lon, dobs$lat)
+
+map_data <- rnaturalearth::ne_countries(
+  scale = "small",
+  returnclass = "sf"
+)
+sf::st_bbox(map_data)
+
+table(sf::st_is_valid(map_data))
+
+map_data_cropped <- sf::st_crop(
+  sf::st_make_valid(map_data),
+    c(xmin = min(dobs$lon) - 5, ymin = min(dobs$lat) + 5,
+      xmax = max(dobs$lon) + 5, ymax = max(dobs$lat) + 5)
+)
+
+ggplot() + geom_sf(data = map_data_cropped) +
+  geom_point(data = dobs, mapping = aes(x = lon, y = lat),
+    size = 0.2, alpha = 0.1)
+
 dus <- filter(dobs, fleet == 1)
+# dus <- filter(dobs)
 plot(dus$lon, dus$lat)
 
-# dus <- filter(dus, lat > -10, lon < -20)
+dus <- filter(dus, lat > -10, lon < -20)
+plot(dus$lon, dus$lat)
+
 dus$X <- NULL
 dus$Y <- NULL
 dus <- sdmTMB::add_utm_columns(dus, ll_names = c("lon", "lat"), utm_crs = 32619)
+# dus <- sdmTMB::add_utm_columns(dus, ll_names = c("lon", "lat"), utm_crs = 32626)
 dus$light_f <- as.factor(dus$light)
 dus$season_f <- as.factor(dus$season)
 
 plot(dus$X, dus$Y)
 
+map_data_cropped_utm <- sf::st_transform(map_data_cropped, crs = 32619)
+
+ggplot() + #geom_sf(data = map_data_cropped_utm) +
+  geom_point(data = dus, mapping = aes(x = X * 1000, y = Y * 1000), size = 0.2, alpha = 0.1)
+
 nrow(dus)
+
+ggplot(dus, aes(X, Y, colour = log(cpue.BUM))) + geom_point() +
+  facet_wrap(~year)
+
+ggplot(dus, aes(X, Y, colour = log(c.BUM))) + geom_point() +
+  facet_wrap(~year)
+
+ggplot(filter(dus, c.BUM > 0), aes(X, Y, colour = log(c.BUM))) + geom_point() +
+  facet_wrap(~year)
+
+mean(dus$c.BUM == 0)
 
 ggplot(dus, aes(X, Y, colour = log(cpue.SWO))) + geom_point() +
   facet_wrap(~year)
 
 dlog <- readr::read_csv("data-raw/logset05.csv")
 dp <- filter(dlog, fleet == 1)
-# dp <- filter(dp, lat > -10, lon < -20)
+# dp <- filter(dlog)
+nrow(dp)
+
+dp <- filter(dp, lat > -10, lon < -20)
 plot(dp$lon, dp$lat, pch = ".")
 dp <- sdmTMB::add_utm_columns(dp, ll_names = c("lon", "lat"), utm_crs = 32619)
+# dp <- sdmTMB::add_utm_columns(dp, ll_names = c("lon", "lat"), utm_crs = 32626)
 dp$light_f <- as.factor(dp$light)
 dp$season_f <- as.factor(dp$season)
 
+nrow(dp)
 grid <- select(dp, X, Y) |> distinct()
+nrow(grid)
+
 grid_all <- purrr::map_dfr(sort(unique(dp$year)), function(x) {
   bind_cols(tibble(year = x), grid)
 })
@@ -71,6 +118,7 @@ grid_all$month <- 6
 grid_all$light_f <- sort(unique(dus$light_f))[1]
 grid_all$season_f <- sort(unique(dus$season_f))[1]
 grid_all$hbf <- mean(dus$hbf)
+nrow(grid_all)
 
 dall <- bind_rows(select(dus, X, Y), select(dp, X, Y))
 
@@ -83,8 +131,9 @@ plot(mesh$mesh, asp = 1, main = NULL)
 points(dus$X ,dus$Y, pch = 21, col = "red")
 # m <- sdmTMB(c.SWO ~ as.factor(year) + s(month, bs = "cc") + s(hbf, k = 5),
 
-m <- sdmTMB(
-  c.SWO ~ as.factor(year) + season_f + s(hbf, k = 5) + light_f,
+m1 <- sdmTMB(
+  # c.SWO ~ as.factor(year) + season_f + s(hbf, k = 5) + light_f,
+  c.BUM ~ as.factor(year) + season_f + s(hbf, k = 5) + light_f,
   data = dus,
   mesh = mesh,
   family = nbinom2(),
@@ -92,13 +141,20 @@ m <- sdmTMB(
   offset = log(dus$hooks),
   spatial = "on",
   spatiotemporal = "iid",
-  silent = FALSE)
+  control = sdmTMBcontrol(newton_loops = 1),
+  silent = FALSE
+)
 m
 
-ggeffects::ggeffect(m, terms = "light_f")
-ggeffects::ggeffect(m, terms = "season_f")
+max(m$gradients)
 
-plot_smooth(m, select = 1)
+sanity(m)
+sanity(m1)
+
+# ggeffects::ggeffect(m, terms = "light_f")
+# ggeffects::ggeffect(m, terms = "season_f")
+
+# plot_smooth(m, select = 1)
 # p <- predict(m, newdata = NULL)
 r <- residuals(m)
 qqnorm(r)
@@ -150,6 +206,7 @@ dus |>
 s <- simulate(m, nsim = 100L)
 mean(s == 0)
 mean(dus$c.SWO == 0)
+# mean(dus$c.BUM == 0)
 
 dharma_residuals(s, m)
 
@@ -181,3 +238,13 @@ p$pred <- exp(p$est + log(dp$hooks))
 # saveRDS(select(p, year, month, lon, lat, pred),
 saveRDS(select(p, pred),
   file = "data-generated/sdmTMB-pred-log.rds")
+
+# TODO
+# - [ ] do with US and with all data?
+# - [ ] look at various predictors
+# - [ ] figure out the projection that makes most sense
+# - [ ] calculate index predicting on all and predicting on only test
+# - [ ] which species? BUM? c.SWO? enough data for each?
+# - [ ] compare to other models that have been done in some way
+# - [ ] write up in some form of R Markdown report
+# - [ ] write up summary for overall report
