@@ -5,6 +5,7 @@ date: "`r Sys.Date()`"
 params:
   use_sets: TRUE
   fleets: !r c(1)
+  species: 'bum'
 ---
 
 ```{r setup, include=FALSE}
@@ -55,6 +56,9 @@ if (params$use_sets) {
   dlog$bum <- dlog$c.bum
   dlog$swo <- dlog$c.swo
 }
+
+dobs$bycatch <- dobs[[params$species]]
+dlog$bycatch <- dlog[[params$species]]
 ```
 
 ```{r filter-fleet}
@@ -79,8 +83,10 @@ map_data <- rnaturalearth::ne_countries(
 )
 map_data_cropped <- sf::st_crop(
   sf::st_make_valid(map_data),
-    c(xmin = min(dlog$lon) - 30, ymin = min(dlog$lat) - 10,
-      xmax = max(dlog$lon) + 10, ymax = max(dlog$lat) + 10)
+  c(
+    xmin = min(dlog$lon) - 30, ymin = min(dlog$lat) - 10,
+    xmax = max(dlog$lon) + 10, ymax = max(dlog$lat) + 10
+  )
 )
 ```
 
@@ -89,20 +95,24 @@ map_data_cropped <- sf::st_crop(
 
 ```{r project}
 if (us_version) { # US only
-  equidistant_conic <- paste0("+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-10 ",
-    "+lat_2=40 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs")
+  equidistant_conic <- paste0(
+    "+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-10 ",
+    "+lat_2=40 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs"
+  )
 } else {
-  equidistant_conic <- paste0("+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-30 ",
-    "+lat_2=35 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs")
+  equidistant_conic <- paste0(
+    "+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-30 ",
+    "+lat_2=35 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs"
+  )
 }
 
 map_data_proj <- sf::st_transform(map_data_cropped, crs = equidistant_conic)
 
 project_dat <- function(x, crs, mult) {
-  x_sf <- sf::st_as_sf(x, coords = c("lon", "lat"), crs = "WGS84") |> 
+  x_sf <- sf::st_as_sf(x, coords = c("lon", "lat"), crs = "WGS84") |>
     sf::st_transform(x, crs = crs)
   xy <- sf::st_coordinates(x_sf)
-  xy <- mutate(as.data.frame(xy), X = X*mult, Y = Y*mult)
+  xy <- mutate(as.data.frame(xy), X = X * mult, Y = Y * mult)
   x$X <- xy$X
   x$Y <- xy$Y
   list(dat_sf = x_sf, dat_sdmTMB = x)
@@ -118,7 +128,8 @@ dlog <- temp$dat_sdmTMB
 ```
 
 ```{r plot-dat-map-log}
-ggplot() + geom_sf(data = map_data_proj) +
+ggplot() +
+  geom_sf(data = map_data_proj) +
   geom_sf(data = dlog_sf, size = 0.2, alpha = 0.2) +
   geom_sf(data = dobs_sf, size = 0.2, alpha = 0.2, colour = "red") +
   coord_sf(expand = FALSE)
@@ -127,12 +138,12 @@ ggplot() + geom_sf(data = map_data_proj) +
 ```{r plot-dat-bycatch-year}
 # bounding_ylim <- range(dlog$lat) + c(-10, 10)
 # bounding_xlim <- range(dlog$lon) + c(-10, 20)
-# 
+#
 # rectangle <- sf::st_sfc(
-#   sf::st_point(bounding_xlim), 
+#   sf::st_point(bounding_xlim),
 #   sf::st_point(bounding_ylim),
 #   crs = 4326
-# ) |> 
+# ) |>
 #   sf::st_transform(crs = equidistant_conic)
 # rec <- sf::st_coordinates(rectangle)
 
@@ -142,14 +153,16 @@ ggplot() + geom_sf(data = map_data_proj) +
 #       xmax = rec[2,1], ymax = rec[2,2]
 # ))
 
-ggplot() + 
+ggplot() +
   # geom_sf(data = map_data_cropped) +
-  geom_point(data = dobs, size = 0.8, 
-    mapping = aes(colour = swo, x = lon, y = lat)) +
+  geom_point(
+    data = dobs, size = 0.8,
+    mapping = aes(colour = bycatch, x = lon, y = lat)
+  ) +
   # coord_sf(expand = FALSE) +
   coord_fixed() +
   # coord_sf(default_crs = equidistant_conic,
-    # ylim = rec[,'Y'], xlim = rec[,'X']) +
+  # ylim = rec[,'Y'], xlim = rec[,'X']) +
   facet_wrap(vars(year)) +
   scale_colour_viridis_c(trans = "log10")
 ```
@@ -184,7 +197,7 @@ combine both; could be just one or the other
 
 ```{r mesh}
 dall <- bind_rows(select(dobs, X, Y), select(dlog, X, Y))
-mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = 220) # cutoff?
+mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = 400) # cutoff?
 mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
 # mesh$mesh$n
 ```
@@ -230,19 +243,20 @@ files_base <- c(
   "fit-dl-sp",
   "fit-dnb2-sp"
 )
+files_base <- paste0(params$species, "-", files_base)
 files <- paste0(here::here("data-generated/"), files_base, ".rds")
-fit_the_models <- any(!file.exists(files))
+do_fit <- any(!file.exists(files))
 ```
 
-```{r fit1, results='hide', eval=fit_the_models}
+```{r fit1, results='hide', eval=do_fit}
 if (us_version) {
-  .spatiotemporal = "off"
+  .spatiotemporal <- "iid"
 } else {
-  .spatiotemporal = "off"
+  .spatiotemporal <- "off"
 }
 
 fit_nb2 <- sdmTMB(
-  swo ~ 0 + year_f + season_f + log(hbf) + light_f,
+  bycatch ~ 0 + year_f + season_f + log(hbf) + light_f,
   data = dobs,
   mesh = mesh,
   family = nbinom2(),
@@ -260,16 +274,18 @@ fit_dl <- update(fit_nb2, family = delta_lognormal())
 fit_dnb2 <- update(fit_nb2, family = delta_truncated_nbinom2())
 ```
 
-```{r saverds, eval=fit_the_models, echo=FALSE}
+```{r saverds, eval=do_fit, echo=FALSE}
 saveRDS(fit_nb2, files[1])
 saveRDS(fit_dg, files[2])
 saveRDS(fit_dl, files[3])
+saveRDS(fit_dnb2, files[4])
 ```
 
-```{r readrds, eval=!fit_the_models, echo=FALSE}
+```{r readrds, eval=!do_fit, echo=FALSE}
 fit_nb2 <- readRDS(files[1])
 fit_dg <- readRDS(files[2])
 fit_dl <- readRDS(files[3])
+fit_dnb2 <- readRDS(files[4])
 ```
 
 ```{r pring-nb2}
@@ -302,6 +318,7 @@ Could do cross validation with `sdmTMB_cv()`, but will not be fast here.
 sdmTMB:::plot_anisotropy2(fit_nb2)
 sdmTMB:::plot_anisotropy2(fit_dg)
 sdmTMB:::plot_anisotropy2(fit_dl)
+sdmTMB:::plot_anisotropy2(fit_dnb2)
 ```
 
 ```{r ggeffect, eval=FALSE}
@@ -320,6 +337,7 @@ plot_resids <- function(x) {
 plot_resids(fit_nb2)
 plot_resids(fit_dg)
 plot_resids(fit_dl)
+plot_resids(fit_dnb2)
 ```
 
 Warning...
@@ -338,8 +356,8 @@ MCMC resids, slowest
 
 ```{r mcmc-resids, eval=FALSE}
 r_mcmc <- residuals(
-  fit_nb2, 
-  type = "mle-mcmc", 
+  fit_nb2,
+  type = "mle-mcmc",
   mcmc_warmup = 100, mcmc_iter = 200
 )
 ```
@@ -372,9 +390,16 @@ plot_map(p_grid, exp(est)) +
   scale_fill_viridis_c(trans = "sqrt")
 ```
 
+```{r plot-est2}
+p_grid |>
+  filter(year %in% range(p_grid$year)) |> # pick two
+  plot_map(exp(est)) +
+  scale_fill_viridis_c(trans = "sqrt")
+```
+
 ```{r plot-omega}
-p_grid |> 
-  filter(year == min(p_grid$year)) |>  # pick one
+p_grid |>
+  filter(year == min(p_grid$year)) |> # pick one
   plot_map(omega_s) +
   scale_fill_gradient2()
 ```
@@ -403,19 +428,21 @@ filter(grid_all, year == min(dobs$year)) |> # picking one
 ```
 
 ```{r cache-check-index, echo=FALSE}
-index_file <- here::here("data-generated", "index.rds")
+index_file <- here::here("data-generated", paste0(params$species, "-", "index.rds"))
 do_calc_index <- !file.exists(index_file)
 ```
 
 ```{r calc-indices, eval=do_calc_index}
 calculate_index <- function(x) {
-  pred <- predict(x, newdata = dlog,
-    offset = log(dlog$hooks), return_tmb_object = TRUE)
-  ind <- get_index(pred, bias_correct = TRUE)
+  pred <- predict(x,
+    newdata = dlog,
+    offset = log(dlog$hooks), return_tmb_object = TRUE
+  )
+  ind <- sdmTMB::get_index(pred, bias_correct = TRUE)
   ind
 }
 models <- list(fit_nb2, fit_dg, fit_dl, fit_dnb2)
-names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma")
+names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma", "Delta-NB2")
 ind <- purrr::map_dfr(models, calculate_index, .id = "model")
 ```
 
@@ -429,32 +456,82 @@ ind <- readRDS(index_file)
 
 ```{r plot-indices}
 true <- group_by(dlog, year) |>
-  summarize(est = sum(swo), type = "simulated")
+  summarize(swo = sum(swo), bum = sum(bum),
+    type = "simulated", model = "simulated")
+true$est <- true[[params$species]]
 
 # both <- left_join(
-#   select(dobs, year, month, lat, lon, hooks, bum, swo), 
+#   select(dobs, year, month, lat, lon, hooks, bum, swo),
 #   distinct(select(dlog, year, month, lat, lon, hooks, bum, swo))
 #   )
 # nrow(both)
 # nrow(dobs)
 
-ind |> 
-  mutate(type = "predicted") |> 
-  bind_rows(true) |> 
-  ggplot(aes(year, est, ymin = lwr, ymax = upr, lty = type, 
-    colour = model, fill = model)) +
+temp <- ind |>
+  mutate(type = "predicted") |>
+  bind_rows(true)
+
+temp |>
+  ggplot(aes(year, est,
+    ymin = lwr, ymax = upr, lty = type,
+    colour = model, fill = model
+  )) +
   geom_ribbon(alpha = 0.5, colour = NA) +
   geom_line() +
   ylab("Bycatch total") +
-  xlab("Year") + 
-  labs(lty = "Type")
+  xlab("Year") +
+  labs(lty = "Type") +
+  scale_color_brewer(palette = "Set2")
 
-left_join(ind, select(true, year, true = est)) |> 
-  group_by(year) |> 
-  summarise(
-    # sq_error = (true - est)^2, 
+temp |>
+  filter(model != "NB2") |>
+  ggplot(aes(year, est,
+    ymin = lwr, ymax = upr, lty = type,
+    colour = model, fill = model
+  )) +
+  geom_ribbon(alpha = 0.5, colour = NA) +
+  geom_line() +
+  ylab("Bycatch total") +
+  xlab("Year") +
+  labs(colour = "Model", fill = "Model") +
+  scale_color_brewer(palette = "Set2")
+
+# raw coverage
+left_join(ind, select(true, year, true = est)) |>
+  mutate(
     covered = true < upr & true > lwr
-  ) |> 
+  ) |>
+  group_by(model) |>
+  summarise(coverage = mean(covered))
+
+temp <- left_join(ind, select(true, year, true = est)) |>
+  group_by(model) |>
+  mutate(
+    geomean = exp(mean(log(est))),
+    true_geomean = exp(mean(log(true)))
+  ) |>
+  mutate(
+    upr = upr / geomean,
+    lwr = lwr / geomean,
+    est = est / geomean,
+    true = true / true_geomean
+  )
+
+temp |>
+  ggplot(aes(year, est, colour = model, fill = model)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.5, colour = NA) +
+  geom_line(aes(y = true), lty = 2) +
+  ylab("Centered predicted bycatch") +
+  xlab("Year") +
+  labs(colour = "Model", fill = "Model") +
+  scale_color_brewer(palette = "Set2")
+
+# centered coverage
+temp |>
+  group_by(model) |>
+  mutate(covered = true < upr & true > lwr) |>
+  group_by(model) |>
   summarise(coverage = mean(covered))
 ```
 
