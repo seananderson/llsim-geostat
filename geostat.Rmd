@@ -5,7 +5,8 @@ date: "`r Sys.Date()`"
 params:
   use_sets: TRUE
   fleets: !r c(1)
-  species: 'bum'
+  species: 'swo'
+  spatiotemporal: "off"
 ---
 
 ```{r setup, include=FALSE}
@@ -17,8 +18,9 @@ knitr::opts_chunk$set(
   comment = "#>",
   cache = TRUE,
   autodep = TRUE,
-  fig.width = 7,
+  fig.width = 9,
   fig.asp = 0.618,
+  out.width = "80%",
   fig.pos = "ht",
   cache.comments = TRUE,
   dev = "png",
@@ -243,18 +245,14 @@ files_base <- c(
   "fit-dl-sp",
   "fit-dnb2-sp"
 )
-files_base <- paste0(params$species, "-", files_base)
+
+fleet <- if (us_version) "us-" else "all-"
+files_base <- paste0(fleet, params$species, "-", files_base)
 files <- paste0(here::here("data-generated/"), files_base, ".rds")
 do_fit <- any(!file.exists(files))
 ```
 
 ```{r fit1, results='hide', eval=do_fit}
-if (us_version) {
-  .spatiotemporal <- "iid"
-} else {
-  .spatiotemporal <- "off"
-}
-
 fit_nb2 <- sdmTMB(
   bycatch ~ 0 + year_f + season_f + log(hbf) + light_f,
   data = dobs,
@@ -264,8 +262,8 @@ fit_nb2 <- sdmTMB(
   offset = log(dobs$hooks),
   spatial = "on",
   anisotropy = TRUE,
-  spatiotemporal = .spatiotemporal,
-  control = sdmTMBcontrol(newton_loops = 1L),
+  spatiotemporal = params$spatiotemporal,
+  control = sdmTMBcontrol(newton_loops = 1),
   silent = FALSE
 )
 # m_tw <- update(fit_nb2, family = tweedie())
@@ -328,7 +326,7 @@ sdmTMB:::plot_anisotropy2(fit_dnb2)
 # ggeffects::ggeffect(fit_nb2, terms = "hbf") |> plot()
 ```
 
-```{r quant-resids}
+```{r quant-resids, out.width="30%"}
 plot_resids <- function(x) {
   r <- residuals(x)
   qqnorm(r)
@@ -350,6 +348,7 @@ plot_dharma_resids <- function(x) {
 plot_dharma_resids(fit_nb2)
 plot_dharma_resids(fit_dg)
 plot_dharma_resids(fit_dl)
+plot_dharma_resids(fit_dnb2)
 ```
 
 MCMC resids, slowest
@@ -362,9 +361,10 @@ r_mcmc <- residuals(
 )
 ```
 
-```{r}
+```{r spatial-residuals}
 dobs$resid <- residuals(fit_dl)
 dobs |>
+  filter(year %in% range(p_grid$year)) |> # pick a couple
   ggplot(aes(lon, lat, colour = resid)) +
   geom_point(size = 0.4) +
   facet_wrap(~year) +
@@ -428,7 +428,7 @@ filter(grid_all, year == min(dobs$year)) |> # picking one
 ```
 
 ```{r cache-check-index, echo=FALSE}
-index_file <- here::here("data-generated", paste0(params$species, "-", "index.rds"))
+index_file <- here::here("data-generated", paste0(fleet, params$species, "-", "index.rds"))
 do_calc_index <- !file.exists(index_file)
 ```
 

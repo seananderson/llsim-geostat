@@ -5,7 +5,7 @@ library(ggplot2)
 # 1.25 hours in meeting
 # 0.5 hour this evening
 # 1 hour this evening
-# 5 hours today
+# 9 hours today
 
 dobs <- readr::read_csv("data-raw/obstrip05.csv")
 names(dobs) <- tolower(names(dobs))
