@@ -1,6 +1,6 @@
 ---
 title: "LLSIM geostat"
-output: bookdown::html_document2()
+output: bookdown::html_document2
 date: "`r Sys.Date()`"
 params:
   use_sets: TRUE
@@ -62,8 +62,7 @@ dobs <- filter(dobs, fleet %in% params$fleets)
 dlog <- filter(dlog, fleet %in% params$fleets)
 ```
 
-
-FIXME:
+FIXME?
 
 ```{r filter-us}
 if (us_version) {
@@ -73,7 +72,7 @@ if (us_version) {
 ```
 
 
-```{r sf-map-dat}
+```{r sf-map-dat, warning=FALSE}
 map_data <- rnaturalearth::ne_countries(
   scale = "small",
   returnclass = "sf"
@@ -148,13 +147,14 @@ ggplot() +
   geom_point(data = dobs, size = 0.8, 
     mapping = aes(colour = swo, x = lon, y = lat)) +
   # coord_sf(expand = FALSE) +
+  coord_fixed() +
   # coord_sf(default_crs = equidistant_conic,
     # ylim = rec[,'Y'], xlim = rec[,'X']) +
   facet_wrap(vars(year)) +
   scale_colour_viridis_c(trans = "log10")
 ```
 
-```{r}
+```{r factorize}
 factorize <- function(x) {
   x$light_f <- as.factor(x$light)
   x$season_f <- as.factor(x$season)
@@ -180,20 +180,20 @@ grid_all$year_f <- as.factor(grid_all$year)
 nrow(grid_all)
 ```
 
-```{r mesh}
-# try grid with all; could be just one or the other
-dall <- bind_rows(select(dobs, X, Y), select(dlog, X, Y))
-mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = 300) # cutoff?
-mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
+combine both; could be just one or the other
 
-mesh$mesh$n
-plot(mesh$mesh, asp = 1, main = NULL)
-points(dobs$X ,dobs$Y, pch = ".", col = "red")
+```{r mesh}
+dall <- bind_rows(select(dobs, X, Y), select(dlog, X, Y))
+mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = 220) # cutoff?
+mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
+# mesh$mesh$n
 ```
 
 ```{r mesh-gg}
+# plot(mesh$mesh, asp = 1, main = NULL)
+# points(dobs$X ,dobs$Y, pch = ".", col = "red")
 ggplot() +
-  geom_point(data = dobs, mapping = aes(X, Y), alpha = 0.7) +
+  geom_point(data = dobs, mapping = aes(X, Y), alpha = 0.2) +
   inlabru::gg(mesh$mesh) +
   coord_fixed()
 ```
@@ -219,7 +219,28 @@ Priors...
 
 Barriers...
 
-```{r fit1, results='hide'}
+versions without any fields or comparison?
+
+random walk on year?
+
+```{r cache-check, echo=FALSE}
+files_base <- c(
+  "fit-nb2-sp",
+  "fit-dg-sp",
+  "fit-dl-sp",
+  "fit-dnb2-sp"
+)
+files <- paste0(here::here("data-generated/"), files_base, ".rds")
+fit_the_models <- any(!file.exists(files))
+```
+
+```{r fit1, results='hide', eval=fit_the_models}
+if (us_version) {
+  .spatiotemporal = "off"
+} else {
+  .spatiotemporal = "off"
+}
+
 fit_nb2 <- sdmTMB(
   swo ~ 0 + year_f + season_f + log(hbf) + light_f,
   data = dobs,
@@ -229,61 +250,68 @@ fit_nb2 <- sdmTMB(
   offset = log(dobs$hooks),
   spatial = "on",
   anisotropy = TRUE,
-  spatiotemporal = "off",
-  control = sdmTMBcontrol(newton_loops = 0L),
+  spatiotemporal = .spatiotemporal,
+  control = sdmTMBcontrol(newton_loops = 1L),
   silent = FALSE
 )
-# fit_nb2$tmb_data$X_ij[[1]] |> colnames()
+# m_tw <- update(fit_nb2, family = tweedie())
+fit_dg <- update(fit_nb2, family = delta_gamma())
+fit_dl <- update(fit_nb2, family = delta_lognormal())
+fit_dnb2 <- update(fit_nb2, family = delta_truncated_nbinom2())
 ```
 
-```{r}
+```{r saverds, eval=fit_the_models, echo=FALSE}
+saveRDS(fit_nb2, files[1])
+saveRDS(fit_dg, files[2])
+saveRDS(fit_dl, files[3])
+```
+
+```{r readrds, eval=!fit_the_models, echo=FALSE}
+fit_nb2 <- readRDS(files[1])
+fit_dg <- readRDS(files[2])
+fit_dl <- readRDS(files[3])
+```
+
+```{r pring-nb2}
 print(fit_nb2)
 sanity(fit_nb2)
 ```
 
-```{r, results='hide'}
-# m_tw <- update(fit_nb2, family = tweedie())
-fit_dg <- update(fit_nb2, family = delta_gamma())
-fit_dl <- update(fit_nb2, family = delta_lognormal(), 
-  spatiotemporal = "iid")
-```
-
-```{r}
-saveRDS(fig_nb2, here::here("data-generated", "fit-nb2.rds"))
-saveRDS(fit_dg, here::here("data-generated", "fit-dg.rds"))
-saveRDS(fit_dl, here::here("data-generated", "fit-dl.rds"))
-```
-
-```{r}
+```{r print-dg}
 print(fit_dg)
 sanity(fit_dg)
 ```
 
-```{r}
+```{r print-dl}
 print(fit_dl)
 sanity(fit_dl)
 ```
 
-```{r}
-AIC(fit_nb2, fit_dg, fit_dl)
+```{r print-dnb2}
+print(fit_dnb2)
+sanity(fit_dnb2)
+```
+
+```{r aic}
+AIC(fit_nb2, fit_dg, fit_dl, fit_dnb2)
 ```
 
 Could do cross validation with `sdmTMB_cv()`, but will not be fast here.
 
-```{r}
+```{r plot-aniso}
 sdmTMB:::plot_anisotropy2(fit_nb2)
 sdmTMB:::plot_anisotropy2(fit_dg)
 sdmTMB:::plot_anisotropy2(fit_dl)
 ```
 
-```{r, eval=FALSE}
+```{r ggeffect, eval=FALSE}
 # ggeffects::ggeffect(fit_nb2, terms = "light_f") |> plot()
 # ggeffects::ggeffect(fit_nb2, terms = "season_f") |> plot()
 # ggeffects::ggeffect(fit_nb2, terms = "year_f") |> plot()
 # ggeffects::ggeffect(fit_nb2, terms = "hbf") |> plot()
 ```
 
-```{r}
+```{r quant-resids}
 plot_resids <- function(x) {
   r <- residuals(x)
   qqnorm(r)
@@ -296,9 +324,9 @@ plot_resids(fit_dl)
 
 Warning...
 
-```{r dharma}
+```{r dharma, eval=FALSE}
 plot_dharma_resids <- function(x) {
-  s <- simulate(x, nsim = 200L)
+  s <- simulate(x, nsim = 100L)
   dharma_residuals(s, x)
 }
 plot_dharma_resids(fit_nb2)
@@ -326,11 +354,11 @@ dobs |>
   coord_equal()
 ```
 
-```{r}
+```{r predict-on-grid}
 p_grid <- predict(fit_nb2, newdata = grid_all)
 ```
 
-```{r}
+```{r plot-map-func}
 plot_map <- function(dat, column = est) {
   ggplot(dat, aes(lon, lat, fill = {{ column }})) +
     geom_raster() +
@@ -339,32 +367,31 @@ plot_map <- function(dat, column = est) {
 }
 ```
 
-
-```{r}
+```{r plot-est}
 plot_map(p_grid, exp(est)) +
   scale_fill_viridis_c(trans = "sqrt")
 ```
 
-```{r}
+```{r plot-omega}
 p_grid |> 
   filter(year == min(p_grid$year)) |>  # pick one
   plot_map(omega_s) +
   scale_fill_gradient2()
 ```
 
-```{r}
+```{r plot-eps, eval="epsilon_st" %in% names(p_grid)}
 p_grid |>
   plot_map(epsilon_st) +
   scale_fill_gradient2()
 ```
 
-```{r}
+```{r check-sim-zero}
 # s <- simulate(fit_nb2, nsim = 100L)
 # mean(s == 0)
 # mean(dobs$swo == 0)
 ```
 
-```{r cv}
+```{r plot-cv}
 pred <- predict(fit_dl, newdata = grid_all, nsim = 100)
 grid_all$cv <- apply(pred, 1, function(x) sd(exp(x)) / mean(exp(x)))
 
@@ -375,33 +402,48 @@ filter(grid_all, year == min(dobs$year)) |> # picking one
   coord_equal()
 ```
 
-```{r}
-pred <- predict(fit_dl, newdata = dlog, 
-  offset = log(dlog$hooks), return_tmb_object = TRUE)
-ind <- get_index(pred, bias_correct = TRUE)
+```{r cache-check-index, echo=FALSE}
+index_file <- here::here("data-generated", "index.rds")
+do_calc_index <- !file.exists(index_file)
+```
 
-# if (us_version) {
-#   total_us <- readr::read_csv("data-raw/TotalUSA.csv", 
-#     show_col_types = FALSE)
-# } else {
-#   total_true <- readr::read_csv("data-raw/TotalAnnualCatches.csv")
-# }
+```{r calc-indices, eval=do_calc_index}
+calculate_index <- function(x) {
+  pred <- predict(x, newdata = dlog,
+    offset = log(dlog$hooks), return_tmb_object = TRUE)
+  ind <- get_index(pred, bias_correct = TRUE)
+  ind
+}
+models <- list(fit_nb2, fit_dg, fit_dl, fit_dnb2)
+names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma")
+ind <- purrr::map_dfr(models, calculate_index, .id = "model")
+```
 
+```{r saverds-index, eval=do_calc_index, echo=FALSE}
+saveRDS(ind, index_file)
+```
+
+```{r readrds-index, eval=!do_calc_index, echo=FALSE}
+ind <- readRDS(index_file)
+```
+
+```{r plot-indices}
 true <- group_by(dlog, year) |>
   summarize(est = sum(swo), type = "simulated")
 
-both <- left_join(
-  select(dobs, year, month, lat, lon, hooks, bum, swo), 
-  distinct(select(dlog, year, month, lat, lon, hooks, bum, swo))
-  )
-nrow(both)
-nrow(dobs)
+# both <- left_join(
+#   select(dobs, year, month, lat, lon, hooks, bum, swo), 
+#   distinct(select(dlog, year, month, lat, lon, hooks, bum, swo))
+#   )
+# nrow(both)
+# nrow(dobs)
 
 ind |> 
   mutate(type = "predicted") |> 
   bind_rows(true) |> 
-  ggplot(aes(year, est, ymin = lwr, ymax = upr, lty = type)) +
-  geom_ribbon(alpha = 0.5) +
+  ggplot(aes(year, est, ymin = lwr, ymax = upr, lty = type, 
+    colour = model, fill = model)) +
+  geom_ribbon(alpha = 0.5, colour = NA) +
   geom_line() +
   ylab("Bycatch total") +
   xlab("Year") + 
@@ -415,3 +457,10 @@ left_join(ind, select(true, year, true = est)) |>
   ) |> 
   summarise(coverage = mean(covered))
 ```
+
+How much easy to read code vs. work for many scenarios in a report?
+One thoroughly or a report for each scenario or in between? 1 in depth, do the others without explanation?
+
+e.g. explore aniso vs. none, families etc.
+could do efficiently - hard to read code
+or do a few with easy to read code
