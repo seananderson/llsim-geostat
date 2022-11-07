@@ -1,0 +1,358 @@
+---
+title: "LLSIM geostat"
+output: bookdown::html_document2()
+date: lubridate::today()
+---
+
+```{r params}
+params <- list()
+params$use_sets <- TRUE
+params$fleets <- c(1)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  cache = TRUE,
+  autodep = TRUE,
+  fig.width = 7,
+  fig.asp = 0.618,
+  fig.pos = "ht",
+  cache.comments = TRUE,
+  # dev = "pdf",
+  dpi = 150
+  # optipng = "-strip all"
+  # R.options = list(prompt = "R> ", continue = "> ")
+)
+# knitr::knit_hooks$set(optipng = knitr::hook_optipng)
+```
+
+```{r libs}
+library(dplyr)
+library(ggplot2)
+theme_set(theme_light())
+library(sdmTMB)
+```
+
+```{r read-dat}
+if (params$use_sets) {
+  dobs <- readr::read_csv("data-raw/obsset05.csv")
+  dlog <- readr::read_csv("data-raw/logset05.csv")
+} else {
+  dobs <- readr::read_csv("data-raw/obstrip05.csv")
+  dlog <- readr::read_csv("data-raw/logtrip05.csv")
+}
+names(dobs) <- tolower(names(dobs))
+names(dlog) <- tolower(names(dlog))
+
+if (params$use_sets) {
+  dobs$bum <- dobs$c.bum
+  dobs$swo <- dobs$c.swo
+  dlog$bum <- dlog$c.bum
+  dlog$swo <- dlog$c.swo
+}
+```
+
+```{r filter-fleet}
+dobs <- filter(dobs, fleet %in% params$fleets)
+dlog <- filter(dlog, fleet %in% params$fleets)
+```
+
+```{r check-us}
+us_version <- identical(params$fleets, 1)
+```
+
+FIXME:
+
+```{r filter-us}
+if (us_version) {
+  dobs <- filter(dobs, lon < 0, lat > -20)
+  dlog <- filter(dlog, lon < 0, lat > -20)
+}
+```
+
+
+```{r sf-map-dat}
+map_data <- rnaturalearth::ne_countries(
+  scale = "small",
+  returnclass = "sf"
+)
+map_data_cropped <- sf::st_crop(
+  sf::st_make_valid(map_data),
+    c(xmin = min(dlog$lon) - 30, ymin = min(dlog$lat) - 10,
+      xmax = max(dlog$lon) + 10, ymax = max(dlog$lat) + 10)
+)
+```
+
+<https://desktop.arcgis.com/en/arcmap/latest/map/projections/equidistant-conic.htm>
+<https://en.wikipedia.org/wiki/Equidistant_conic_projection>
+
+```{r project}
+if (us_version) { # US only
+  equidistant_conic <- paste0("+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-10 ",
+    "+lat_2=40 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs")
+} else {
+  equidistant_conic <- paste0("+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-30 ",
+    "+lat_2=35 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs")
+}
+
+map_data_proj <- sf::st_transform(map_data_cropped, crs = equidistant_conic)
+
+project_dat <- function(x, crs, mult) {
+  x_sf <- sf::st_as_sf(x, coords = c("lon", "lat"), crs = "WGS84") |> 
+    sf::st_transform(x, crs = crs)
+  xy <- sf::st_coordinates(x_sf)
+  xy <- mutate(as.data.frame(xy), X = X*mult, Y = Y*mult)
+  x$X <- xy$X
+  x$Y <- xy$Y
+  list(dat_sf = x_sf, dat_sdmTMB = x)
+}
+
+temp <- project_dat(dobs, equidistant_conic, mult = 0.01)
+dobs_sf <- temp$dat_sf
+dobs <- temp$dat_sdmTMB
+
+temp <- project_dat(dlog, equidistant_conic, mult = 0.01)
+dlog_sf <- temp$dat_sf
+dlog <- temp$dat_sdmTMB
+```
+
+```{r plot-dat-map-log}
+ggplot() + geom_sf(data = map_data_proj) +
+  geom_sf(data = dlog_sf, size = 0.2, alpha = 0.2) +
+  geom_sf(data = dobs_sf, size = 0.2, alpha = 0.2, colour = "red") +
+  coord_sf(expand = FALSE)
+```
+
+```{r plot-dat-bycatch-year}
+# bounding_ylim <- range(dlog$lat) + c(-10, 10)
+# bounding_xlim <- range(dlog$lon) + c(-10, 20)
+# 
+# rectangle <- sf::st_sfc(
+#   sf::st_point(bounding_xlim), 
+#   sf::st_point(bounding_ylim),
+#   crs = 4326
+# ) |> 
+#   sf::st_transform(crs = equidistant_conic)
+# rec <- sf::st_coordinates(rectangle)
+
+# map_data_cropped <- sf::st_crop(
+#   sf::st_make_valid(map_data_proj),
+#     c(xmin = rec[1,1], ymin = rec[1,2],
+#       xmax = rec[2,1], ymax = rec[2,2]
+# ))
+
+ggplot() + 
+  # geom_sf(data = map_data_cropped) +
+  geom_point(data = dobs, size = 0.8, 
+    mapping = aes(colour = swo, x = lon, y = lat)) +
+  # coord_sf(expand = FALSE) +
+  # coord_sf(default_crs = equidistant_conic,
+    # ylim = rec[,'Y'], xlim = rec[,'X']) +
+  facet_wrap(vars(year)) +
+  scale_colour_viridis_c(trans = "log10")
+```
+
+```{r}
+factorize <- function(x) {
+  x$light_f <- as.factor(x$light)
+  x$season_f <- as.factor(x$season)
+  x$year_f <- as.factor(x$year)
+  x
+}
+dobs <- factorize(dobs)
+dlog <- factorize(dlog)
+```
+
+```{r grid}
+grid <- select(dlog, X, Y) |> distinct()
+nrow(grid)
+grid_all <- purrr::map_dfr(sort(unique(dlog$year)), function(x) {
+  bind_cols(tibble(year = x), grid)
+})
+grid_all <- left_join(grid_all, distinct(select(dlog, X, Y, lon, lat)))
+grid_all$month <- 6
+grid_all$light_f <- sort(unique(dobs$light_f))[1]
+grid_all$season_f <- sort(unique(dobs$season_f))[1]
+grid_all$hbf <- mean(dobs$hbf)
+grid_all$year_f <- as.factor(grid_all$year)
+nrow(grid_all)
+```
+
+```{r mesh}
+# try grid with all; could be just one or the other
+dall <- bind_rows(select(dobs, X, Y), select(dlog, X, Y))
+mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = 300) # cutoff?
+mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
+
+mesh$mesh$n
+plot(mesh$mesh, asp = 1, main = NULL)
+points(dobs$X ,dobs$Y, pch = ".", col = "red")
+```
+
+```{r mesh-gg}
+ggplot() +
+  geom_point(data = dobs, mapping = aes(X, Y), alpha = 0.7) +
+  inlabru::gg(mesh$mesh) +
+  coord_fixed()
+```
+
+
+```{r check-data}
+table(dobs$light_f)
+table(dobs$year_f)
+table(dobs$season_f)
+
+# make sure there aren't years with 100% or 0% observations:
+group_by(dobs, year) |>
+  summarise(pos_swo = mean(swo > 0), pos_bum = mean(bum > 0), n = n()) |>
+  as.data.frame()
+
+# table(dobs$year, dobs$season)
+# table(dobs$year, dobs$light_f)
+# table(dobs$light_f, dobs$season_f)
+```
+
+```{r fit1}
+fit_nb2 <- sdmTMB(
+  swo ~ year_f + season_f + log(hbf) + light_f,
+  data = dobs,
+  mesh = mesh,
+  family = nbinom2(),
+  # family = tweedie(),
+  # family = delta_gamma(),
+  # family = delta_lognormal(),
+  time = "year",
+  offset = log(dobs$hooks),
+  spatial = "on",
+  # anisotropy = TRUE,
+  spatiotemporal = "iid",
+  # priors = sdmTMBpriors( # to include or not?
+  #   matern_s = pc_matern(range_gt = 10, sigma_lt = 1),
+  #   matern_st = pc_matern(range_gt = 10, sigma_lt = 1)
+  # ),
+  control = sdmTMBcontrol(newton_loops = 1),
+  silent = FALSE
+)
+```
+
+```{r}
+# dobs$response <- dobs$swo * 0.1
+
+fit_dg <- sdmTMB(
+  # response ~ 0 + year_f + season_f + hbf + light_f,
+  swo ~ 0 + year_f + hbf,
+  data = dobs,
+  mesh = mesh,
+  # family = nbinom2(),
+  # family = tweedie(),
+  family = delta_gamma(),
+  # family = delta_lognormal(),
+  time = "year",
+  offset = log(dobs$hooks),
+  spatial = "on",
+  # anisotropy = TRUE,
+  spatiotemporal = "iid",
+  # priors = sdmTMBpriors( # to include or not?
+  #   matern_s = pc_matern(range_gt = 10, sigma_lt = 1),
+  #   matern_st = pc_matern(range_gt = 10, sigma_lt = 1)
+  # ),
+  # control = sdmTMBcontrol(newton_loops = 1),
+  silent = FALSE
+)
+```
+
+```{r}
+# m_tw <- update(fit_nb2, family = tweedie())
+# m_dg <- update(fit_nb2, family = delta_gamma())
+```
+
+
+```{r}
+print(fit_nb2)
+sanity(fit_nb2)
+```
+
+```{r, eval=FALSE}
+ggeffects::ggeffect(fit_nb2, terms = "light_f") |> plot()
+ggeffects::ggeffect(fit_nb2, terms = "season_f") |> plot()
+ggeffects::ggeffect(fit_nb2, terms = "year_f") |> plot()
+ggeffects::ggeffect(fit_nb2, terms = "hbf") |> plot()
+```
+
+```{r}
+r <- residuals(fit_nb2)
+qqnorm(r)
+qqline(r)
+```
+
+```{r}
+p_grid <- predict(fit_nb2, newdata = grid_all)
+```
+
+```{r}
+ggplot(pall, aes(lon, lat, fill = exp(est))) +
+  geom_raster() +
+  facet_wrap(~year) +
+  scale_fill_viridis_c(trans = "sqrt") +
+  coord_equal()
+
+pall |> filter(year == min(pall$year)) |>
+  ggplot(aes(lon, lat, fill = omega_s)) +
+  geom_raster() +
+  scale_fill_gradient2() +
+  coord_equal()
+
+pall |>
+  ggplot(aes(lon, lat, fill = epsilon_st)) +
+  geom_raster() +
+  facet_wrap(~year) +
+  scale_fill_gradient2() +
+  coord_equal()
+
+dobs$resid <- r
+dobs |>
+  ggplot(aes(lon, lat, colour = resid)) +
+  geom_point(size = 0.4) +
+  facet_wrap(~year) +
+  scale_colour_gradient2() +
+  coord_equal()
+```
+
+```{r}
+s <- simulate(m, nsim = 100L)
+mean(s == 0)
+mean(dobs$swo == 0)
+```
+
+```{r cv}
+pred <- predict(m, newdata = grid_all, nsim = 100)
+grid_all$cv <- apply(pred, 1, function(x) sd(exp(x)) / mean(exp(x)))
+
+filter(grid_all, year == min(dobs$year)) |>
+  ggplot(aes(lon, lat, fill = cv)) +
+  geom_raster() +
+  scale_fill_viridis_c(option = "B") +
+  coord_equal()
+```
+
+```{r}
+pred <- predict(fit_nb2, newdata = dlog, return_tmb_object = TRUE)
+ind <- get_index(pred, bias_correct = TRUE)
+
+ggplot(ind, aes(year, est, ymin = lwr, ymax = upr)) +
+  geom_ribbon(alpha = 0.5) +
+  geom_line() +
+  ylab("Predicted c.SOW logbook total") +
+  xlab("Year")
+```
+
+
+
+
+
+

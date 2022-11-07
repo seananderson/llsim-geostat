@@ -188,18 +188,24 @@ group_by(dobs, year) |>
   summarise(pos_swo = mean(swo > 0), pos_bum = mean(bum > 0), n = n()) |>
   as.data.frame()
 
+table(dobs$year, dobs$season)
+table(dobs$year, dobs$light_f)
+table(dobs$light_f, dobs$season_f)
+
 # So, need RW/AR1 on year... or can't do binomial on SWO
+
+mean(log(dobs$hooks))
 
 m <- sdmTMB(
   # swo ~ as.factor(year) + season_f + s(hbf, k = 5) + light_f,
-  # bum ~ 0 + year_f + season_f + log(hbf) + light_f,
-  bum ~ 0 + season_f + log(hbf) + light_f,
+  bum ~ 0 + year_f + season_f + log(hbf) + light_f,
+  # bum ~ 0 + season_f + log(hbf) + light_f,
   data = dobs,
   mesh = mesh,
-  time_varying = ~ 1, # FIXME: consider including/not
-  # family = nbinom2(),
+  # time_varying = ~ 1, # FIXME: consider including/not
+  family = nbinom2(),
   # family = tweedie(),
-  family = delta_gamma(),
+  # family = delta_gamma(),
   # family = delta_lognormal(),
   time = "year",
   offset = log(dobs$hooks),
