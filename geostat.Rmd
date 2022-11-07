@@ -1,14 +1,11 @@
 ---
 title: "LLSIM geostat"
 output: bookdown::html_document2()
-date: lubridate::today()
+date: "`r Sys.Date()`"
+params:
+  use_sets: TRUE
+  fleets: !r c(1)
 ---
-
-```{r params}
-params <- list()
-params$use_sets <- TRUE
-params$fleets <- c(1)
-```
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -23,10 +20,9 @@ knitr::opts_chunk$set(
   fig.asp = 0.618,
   fig.pos = "ht",
   cache.comments = TRUE,
-  # dev = "pdf",
+  dev = "png",
   dpi = 150
   # optipng = "-strip all"
-  # R.options = list(prompt = "R> ", continue = "> ")
 )
 # knitr::knit_hooks$set(optipng = knitr::hook_optipng)
 ```
@@ -34,8 +30,12 @@ knitr::opts_chunk$set(
 ```{r libs}
 library(dplyr)
 library(ggplot2)
-theme_set(theme_light())
 library(sdmTMB)
+theme_set(theme_light())
+```
+
+```{r check-us}
+us_version <- identical(params$fleets, 1)
 ```
 
 ```{r read-dat}
@@ -62,9 +62,6 @@ dobs <- filter(dobs, fleet %in% params$fleets)
 dlog <- filter(dlog, fleet %in% params$fleets)
 ```
 
-```{r check-us}
-us_version <- identical(params$fleets, 1)
-```
 
 FIXME:
 
@@ -201,7 +198,6 @@ ggplot() +
   coord_fixed()
 ```
 
-
 ```{r check-data}
 table(dobs$light_f)
 table(dobs$year_f)
@@ -217,104 +213,111 @@ group_by(dobs, year) |>
 # table(dobs$light_f, dobs$season_f)
 ```
 
-```{r fit1}
+Anisotropy: 
+
+Priors...
+
+Barriers...
+
+```{r fit1, results='hide'}
 fit_nb2 <- sdmTMB(
-  swo ~ year_f + season_f + log(hbf) + light_f,
+  swo ~ 0 + year_f + season_f + log(hbf) + light_f,
   data = dobs,
   mesh = mesh,
   family = nbinom2(),
-  # family = tweedie(),
-  # family = delta_gamma(),
-  # family = delta_lognormal(),
   time = "year",
   offset = log(dobs$hooks),
   spatial = "on",
-  # anisotropy = TRUE,
-  spatiotemporal = "iid",
-  # priors = sdmTMBpriors( # to include or not?
-  #   matern_s = pc_matern(range_gt = 10, sigma_lt = 1),
-  #   matern_st = pc_matern(range_gt = 10, sigma_lt = 1)
-  # ),
-  control = sdmTMBcontrol(newton_loops = 1),
+  anisotropy = TRUE,
+  spatiotemporal = "off",
+  control = sdmTMBcontrol(newton_loops = 0L),
   silent = FALSE
 )
+# fit_nb2$tmb_data$X_ij[[1]] |> colnames()
 ```
-
-```{r}
-# dobs$response <- dobs$swo * 0.1
-
-fit_dg <- sdmTMB(
-  # response ~ 0 + year_f + season_f + hbf + light_f,
-  swo ~ 0 + year_f + hbf,
-  data = dobs,
-  mesh = mesh,
-  # family = nbinom2(),
-  # family = tweedie(),
-  family = delta_gamma(),
-  # family = delta_lognormal(),
-  time = "year",
-  offset = log(dobs$hooks),
-  spatial = "on",
-  # anisotropy = TRUE,
-  spatiotemporal = "iid",
-  # priors = sdmTMBpriors( # to include or not?
-  #   matern_s = pc_matern(range_gt = 10, sigma_lt = 1),
-  #   matern_st = pc_matern(range_gt = 10, sigma_lt = 1)
-  # ),
-  # control = sdmTMBcontrol(newton_loops = 1),
-  silent = FALSE
-)
-```
-
-```{r}
-# m_tw <- update(fit_nb2, family = tweedie())
-# m_dg <- update(fit_nb2, family = delta_gamma())
-```
-
 
 ```{r}
 print(fit_nb2)
 sanity(fit_nb2)
 ```
 
+```{r, results='hide'}
+# m_tw <- update(fit_nb2, family = tweedie())
+fit_dg <- update(fit_nb2, family = delta_gamma())
+fit_dl <- update(fit_nb2, family = delta_lognormal(), 
+  spatiotemporal = "iid")
+```
+
+```{r}
+saveRDS(fig_nb2, here::here("data-generated", "fit-nb2.rds"))
+saveRDS(fit_dg, here::here("data-generated", "fit-dg.rds"))
+saveRDS(fit_dl, here::here("data-generated", "fit-dl.rds"))
+```
+
+```{r}
+print(fit_dg)
+sanity(fit_dg)
+```
+
+```{r}
+print(fit_dl)
+sanity(fit_dl)
+```
+
+```{r}
+AIC(fit_nb2, fit_dg, fit_dl)
+```
+
+Could do cross validation with `sdmTMB_cv()`, but will not be fast here.
+
+```{r}
+sdmTMB:::plot_anisotropy2(fit_nb2)
+sdmTMB:::plot_anisotropy2(fit_dg)
+sdmTMB:::plot_anisotropy2(fit_dl)
+```
+
 ```{r, eval=FALSE}
-ggeffects::ggeffect(fit_nb2, terms = "light_f") |> plot()
-ggeffects::ggeffect(fit_nb2, terms = "season_f") |> plot()
-ggeffects::ggeffect(fit_nb2, terms = "year_f") |> plot()
-ggeffects::ggeffect(fit_nb2, terms = "hbf") |> plot()
+# ggeffects::ggeffect(fit_nb2, terms = "light_f") |> plot()
+# ggeffects::ggeffect(fit_nb2, terms = "season_f") |> plot()
+# ggeffects::ggeffect(fit_nb2, terms = "year_f") |> plot()
+# ggeffects::ggeffect(fit_nb2, terms = "hbf") |> plot()
 ```
 
 ```{r}
-r <- residuals(fit_nb2)
-qqnorm(r)
-qqline(r)
+plot_resids <- function(x) {
+  r <- residuals(x)
+  qqnorm(r)
+  qqline(r)
+}
+plot_resids(fit_nb2)
+plot_resids(fit_dg)
+plot_resids(fit_dl)
+```
+
+Warning...
+
+```{r dharma}
+plot_dharma_resids <- function(x) {
+  s <- simulate(x, nsim = 200L)
+  dharma_residuals(s, x)
+}
+plot_dharma_resids(fit_nb2)
+plot_dharma_resids(fit_dg)
+plot_dharma_resids(fit_dl)
+```
+
+MCMC resids, slowest
+
+```{r mcmc-resids, eval=FALSE}
+r_mcmc <- residuals(
+  fit_nb2, 
+  type = "mle-mcmc", 
+  mcmc_warmup = 100, mcmc_iter = 200
+)
 ```
 
 ```{r}
-p_grid <- predict(fit_nb2, newdata = grid_all)
-```
-
-```{r}
-ggplot(pall, aes(lon, lat, fill = exp(est))) +
-  geom_raster() +
-  facet_wrap(~year) +
-  scale_fill_viridis_c(trans = "sqrt") +
-  coord_equal()
-
-pall |> filter(year == min(pall$year)) |>
-  ggplot(aes(lon, lat, fill = omega_s)) +
-  geom_raster() +
-  scale_fill_gradient2() +
-  coord_equal()
-
-pall |>
-  ggplot(aes(lon, lat, fill = epsilon_st)) +
-  geom_raster() +
-  facet_wrap(~year) +
-  scale_fill_gradient2() +
-  coord_equal()
-
-dobs$resid <- r
+dobs$resid <- residuals(fit_dl)
 dobs |>
   ggplot(aes(lon, lat, colour = resid)) +
   geom_point(size = 0.4) +
@@ -324,35 +327,91 @@ dobs |>
 ```
 
 ```{r}
-s <- simulate(m, nsim = 100L)
-mean(s == 0)
-mean(dobs$swo == 0)
+p_grid <- predict(fit_nb2, newdata = grid_all)
+```
+
+```{r}
+plot_map <- function(dat, column = est) {
+  ggplot(dat, aes(lon, lat, fill = {{ column }})) +
+    geom_raster() +
+    facet_wrap(~year) +
+    coord_fixed()
+}
+```
+
+
+```{r}
+plot_map(p_grid, exp(est)) +
+  scale_fill_viridis_c(trans = "sqrt")
+```
+
+```{r}
+p_grid |> 
+  filter(year == min(p_grid$year)) |>  # pick one
+  plot_map(omega_s) +
+  scale_fill_gradient2()
+```
+
+```{r}
+p_grid |>
+  plot_map(epsilon_st) +
+  scale_fill_gradient2()
+```
+
+```{r}
+# s <- simulate(fit_nb2, nsim = 100L)
+# mean(s == 0)
+# mean(dobs$swo == 0)
 ```
 
 ```{r cv}
-pred <- predict(m, newdata = grid_all, nsim = 100)
+pred <- predict(fit_dl, newdata = grid_all, nsim = 100)
 grid_all$cv <- apply(pred, 1, function(x) sd(exp(x)) / mean(exp(x)))
 
-filter(grid_all, year == min(dobs$year)) |>
+filter(grid_all, year == min(dobs$year)) |> # picking one
   ggplot(aes(lon, lat, fill = cv)) +
   geom_raster() +
-  scale_fill_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "A", trans = "log10") +
   coord_equal()
 ```
 
 ```{r}
-pred <- predict(fit_nb2, newdata = dlog, return_tmb_object = TRUE)
+pred <- predict(fit_dl, newdata = dlog, 
+  offset = log(dlog$hooks), return_tmb_object = TRUE)
 ind <- get_index(pred, bias_correct = TRUE)
 
-ggplot(ind, aes(year, est, ymin = lwr, ymax = upr)) +
+# if (us_version) {
+#   total_us <- readr::read_csv("data-raw/TotalUSA.csv", 
+#     show_col_types = FALSE)
+# } else {
+#   total_true <- readr::read_csv("data-raw/TotalAnnualCatches.csv")
+# }
+
+true <- group_by(dlog, year) |>
+  summarize(est = sum(swo), type = "simulated")
+
+both <- left_join(
+  select(dobs, year, month, lat, lon, hooks, bum, swo), 
+  distinct(select(dlog, year, month, lat, lon, hooks, bum, swo))
+  )
+nrow(both)
+nrow(dobs)
+
+ind |> 
+  mutate(type = "predicted") |> 
+  bind_rows(true) |> 
+  ggplot(aes(year, est, ymin = lwr, ymax = upr, lty = type)) +
   geom_ribbon(alpha = 0.5) +
   geom_line() +
-  ylab("Predicted c.SOW logbook total") +
-  xlab("Year")
+  ylab("Bycatch total") +
+  xlab("Year") + 
+  labs(lty = "Type")
+
+left_join(ind, select(true, year, true = est)) |> 
+  group_by(year) |> 
+  summarise(
+    # sq_error = (true - est)^2, 
+    covered = true < upr & true > lwr
+  ) |> 
+  summarise(coverage = mean(covered))
 ```
-
-
-
-
-
-
