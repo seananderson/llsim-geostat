@@ -31,9 +31,22 @@ rmarkdown::render("geostat.Rmd",
 rmarkdown::render("geostat.Rmd",
   params = list(
     use_sets = TRUE,
-    fleets = c(1, 3, 3),
+    fleets = c(1, 2, 3),
     species = "bum",
-    spatiotemporal = "off"
+    spatiotemporal = "iid",
+    spatial = "on"
   ),
-  output_file = "all-sets-bum.html"
+  output_file = "all-sets-bum-iid.html"
+)
+
+rmarkdown::render("geostat.Rmd",
+  params = list(
+    use_sets = TRUE,
+    fleets = c(1, 2, 3),
+    species = "bum",
+    spatiotemporal = "iid",
+    spatial = "on",
+    share_range = FALSE
+  ),
+  output_file = "all-sets-bum-iid-share-range-false.html"
 )

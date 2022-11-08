@@ -4,10 +4,31 @@ output: bookdown::html_document2
 date: "`r Sys.Date()`"
 params:
   use_sets: TRUE
-  fleets: !r c(1)
-  species: 'swo'
+  fleets: !r c(1, 2, 3)
+  species: 'bum'
   spatiotemporal: "iid"
+  spatial: "on"
+  share_range: TRUE
 ---
+
+## TODO
+
+- [ ] add version without spatial/spatiotemporal for comparison
+- [ ] add basic explanation below
+- [ ] figure out nice figs for main writeup
+- [ ] one nice appendix?
+- [ ] compare to Beth's using same metrics?
+- [ ] maybe take the time to run the spatiotemporal all models
+- [ ] make projected plot not look laughable
+
+## Conclusions
+
+- seems to need flexibility of a delta model
+- Tweedie often doesn't converge here
+- NB2 can be wildly off high or low
+- seems to be some anisotropy... but think about projection
+- coverage seems a bit low for SWO and a bit high for BUM
+- spatiotemporal component often shrinks to zero for the much rarer BUM bycatch
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -68,7 +89,7 @@ dobs <- filter(dobs, fleet %in% params$fleets)
 dlog <- filter(dlog, fleet %in% params$fleets)
 ```
 
-FIXME?
+Explain large spatial outliers
 
 ```{r filter-us}
 if (us_version) {
@@ -77,37 +98,34 @@ if (us_version) {
 }
 ```
 
-```{r sf-map-dat, warning=FALSE}
-map_data <- rnaturalearth::ne_countries(
-  scale = "small",
-  returnclass = "sf"
-)
-map_data_cropped <- sf::st_crop(
-  sf::st_make_valid(map_data),
-  c(
-    xmin = min(dlog$lon) - 30, ymin = min(dlog$lat) - 10,
-    xmax = max(dlog$lon) + 10, ymax = max(dlog$lat) + 10
-  )
-)
-```
-
 <https://desktop.arcgis.com/en/arcmap/latest/map/projections/equidistant-conic.htm>
 <https://en.wikipedia.org/wiki/Equidistant_conic_projection>
 
+Go back to Albers?
+
 ```{r project}
 if (us_version) { # US only
-  equidistant_conic <- paste0(
+  conic <- paste0(
     "+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-10 ",
     "+lat_2=40 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs"
   )
 } else {
-  equidistant_conic <- paste0(
+  conic <- paste0(
     "+proj=eqdc +lat_0=0 +lon_0=-20 +lat_1=-30 ",
     "+lat_2=35 +x_0=0 +y_0=0 +datum=WGS84 +units=km +no_defs"
   )
 }
-
-map_data_proj <- sf::st_transform(map_data_cropped, crs = equidistant_conic)
+if (us_version) { # US only
+  albers <- paste0(
+    "+proj=aea +lat_0=0 +lon_0=-20 +lat_1=-10 ",
+    "+lat_2=40 +x_0=0 +y_0=0 +datum=NAD83 +units=km +no_defs"
+  )
+} else {
+  albers <- paste0(
+    "+proj=aea +lat_0=0 +lon_0=-20 +lat_1=-30 ",
+    "+lat_2=35 +x_0=0 +y_0=0 +datum=NAD83 +units=km +no_defs"
+  )
+}
 
 project_dat <- function(x, crs, mult) {
   x_sf <- sf::st_as_sf(x, coords = c("lon", "lat"), crs = "WGS84") |>
@@ -119,51 +137,51 @@ project_dat <- function(x, crs, mult) {
   list(dat_sf = x_sf, dat_sdmTMB = x)
 }
 
-temp <- project_dat(dobs, equidistant_conic, mult = 0.01)
+.crs <- albers
+# .csr <- conic
+# .crs <- 32626
+temp <- project_dat(dobs, .crs, mult = 0.01)
 dobs_sf <- temp$dat_sf
 dobs <- temp$dat_sdmTMB
 
-temp <- project_dat(dlog, equidistant_conic, mult = 0.01)
+temp <- project_dat(dlog, .crs, mult = 0.01)
 dlog_sf <- temp$dat_sf
 dlog <- temp$dat_sdmTMB
 ```
 
 ```{r plot-dat-map-log}
+map_data <- rnaturalearth::ne_countries(
+  scale = "small",
+  returnclass = "sf"
+)
+map_data_cropped <- sf::st_crop(
+  sf::st_make_valid(map_data),
+  c(
+    xmin = min(dlog$lon) - 20, ymin = min(dlog$lat) - 20,
+    xmax = max(dlog$lon) + 20, ymax = max(dlog$lat) + 20
+  )
+)
+
+gg_coord <- coord_sf(expand = FALSE, crs = "WGS84",
+    xlim = c(range(dlog$lon) + c(-5, 5)),
+    ylim = c(range(dlog$lat) + c(-5, 5))
+  )
+
 ggplot() +
-  geom_sf(data = map_data_proj) +
+  geom_sf(data = map_data_cropped, colour = "grey60", fill = "grey60") +
   geom_sf(data = dlog_sf, size = 0.2, alpha = 0.2) +
   geom_sf(data = dobs_sf, size = 0.2, alpha = 0.2, colour = "red") +
-  coord_sf(expand = FALSE)
+  gg_coord
 ```
 
 ```{r plot-dat-bycatch-year, echo=FALSE}
-# bounding_ylim <- range(dlog$lat) + c(-10, 10)
-# bounding_xlim <- range(dlog$lon) + c(-10, 20)
-#
-# rectangle <- sf::st_sfc(
-#   sf::st_point(bounding_xlim),
-#   sf::st_point(bounding_ylim),
-#   crs = 4326
-# ) |>
-#   sf::st_transform(crs = equidistant_conic)
-# rec <- sf::st_coordinates(rectangle)
-
-# map_data_cropped <- sf::st_crop(
-#   sf::st_make_valid(map_data_proj),
-#     c(xmin = rec[1,1], ymin = rec[1,2],
-#       xmax = rec[2,1], ymax = rec[2,2]
-# ))
-
 ggplot() +
-  # geom_sf(data = map_data_cropped) +
+  geom_sf(data = map_data_cropped) +
   geom_point(
     data = dobs, size = 0.8,
     mapping = aes(colour = bycatch, x = lon, y = lat)
   ) +
-  # coord_sf(expand = FALSE) +
-  coord_fixed() +
-  # coord_sf(default_crs = equidistant_conic,
-  # ylim = rec[,'Y'], xlim = rec[,'X']) +
+  gg_coord +
   facet_wrap(vars(year)) +
   scale_colour_viridis_c(trans = "log10")
 ```
@@ -214,7 +232,7 @@ ggplot() +
   theme_light()
 ```
 
-```{r theme-light}
+```{r theme-light, echo=FALSE}
 theme_set(theme_light())
 ```
 
@@ -240,52 +258,59 @@ versions without any fields or comparison?
 random walk on year?
 
 ```{r cache-check, echo=FALSE}
-files_base <- c(
-  "fit-nb2-sp",
-  "fit-dg-sp",
-  "fit-dl-sp",
-  "fit-dnb2-sp"
-)
-
-fleet <- if (us_version) "us-" else "all-"
-files_base <- paste0(fleet, params$species, "-", files_base, "-", knots)
-files <- paste0(here::here("data-generated/"), files_base, ".rds")
+file_name_maker <- function(type, fleet, family, sp, st, knots, share_range) {
+  f <- paste(type, fleet, family, "sp", sp, "st", st, "knots", knots, "share_range", share_range, sep = "-")
+  here::here("data-generated", paste0(f, ".rds"))
+}
+fleet <- if (us_version) "us" else "all"
+files <- file_name_maker(type = 'fit', fleet = fleet, 
+  family = c("nb2", "dg", "dl"), 
+  sp = 'on', st = params$spatiotemporal, knots = knots, share_range = params$share_range)
 do_fit <- any(!file.exists(files))
+message(do_fit)
 ```
 
 ```{r fit1, results='hide', eval=do_fit}
+tictoc::tic()
 fit_nb2 <- sdmTMB(
-  bycatch ~ 0 + year_f + season_f + log(hbf) + light_f,
+  bycatch ~ year_f + season_f + hbf + light_f,
   data = dobs,
   mesh = mesh,
   family = nbinom2(),
   time = "year",
   offset = log(dobs$hooks),
-  spatial = "on",
-  anisotropy = TRUE,
+  spatial = params$spatial,
   spatiotemporal = params$spatiotemporal,
+  share_range = params$share_range,
+  anisotropy = TRUE,
   control = sdmTMBcontrol(newton_loops = 1),
   silent = FALSE
 )
+tictoc::toc()
 
 # m_tw <- update(fit_nb2, formula = bycatch ~ year_f + season_f, spatiotemporal = "off", family = tweedie())
+tictoc::tic()
 fit_dg <- update(fit_nb2, family = delta_gamma())
+tictoc::toc()
+
+tictoc::tic()
 fit_dl <- update(fit_nb2, family = delta_lognormal())
-fit_dnb2 <- update(fit_nb2, family = delta_truncated_nbinom2())
+tictoc::toc()
+# fit_dnb2 <- update(fit_nb2, family = delta_truncated_nbinom2())
 ```
 
 ```{r saverds, eval=do_fit, echo=FALSE}
 saveRDS(fit_nb2, files[1])
 saveRDS(fit_dg, files[2])
 saveRDS(fit_dl, files[3])
-saveRDS(fit_dnb2, files[4])
+# saveRDS(fit_dnb2, files[4])
 ```
 
 ```{r readrds, eval=!do_fit, echo=FALSE}
 fit_nb2 <- readRDS(files[1])
 fit_dg <- readRDS(files[2])
 fit_dl <- readRDS(files[3])
-fit_dnb2 <- readRDS(files[4])
+# fit_dnb2 <- readRDS(files[4])
 ```
 
 ```{r pring-nb2, message=TRUE}
@@ -303,13 +328,8 @@ print(fit_dl)
 sanity(fit_dl)
 ```
 
-```{r print-dnb2, message=TRUE}
-print(fit_dnb2)
-sanity(fit_dnb2)
-```
-
 ```{r aic}
-AIC(fit_nb2, fit_dg, fit_dl, fit_dnb2) |> 
+AIC(fit_nb2, fit_dg, fit_dl) |> 
   arrange(AIC)
 ```
 
@@ -319,7 +339,6 @@ Could do cross validation with `sdmTMB_cv()`, but will not be fast here.
 sdmTMB:::plot_anisotropy2(fit_nb2)
 sdmTMB:::plot_anisotropy2(fit_dg)
 sdmTMB:::plot_anisotropy2(fit_dl)
-sdmTMB:::plot_anisotropy2(fit_dnb2)
 ```
 
 ```{r ggeffect, eval=FALSE, echo=FALSE}
@@ -338,20 +357,18 @@ plot_resids <- function(x) {
 plot_resids(fit_nb2)
 plot_resids(fit_dg)
 plot_resids(fit_dl)
-plot_resids(fit_dnb2)
 ```
 
 Warning...
 
 ```{r dharma, eval=FALSE}
 plot_dharma_resids <- function(x) {
-  s <- simulate(x, nsim = 100L)
+  s <- simulate(x, nsim = 200L)
   dharma_residuals(s, x)
 }
 plot_dharma_resids(fit_nb2)
 plot_dharma_resids(fit_dg)
 plot_dharma_resids(fit_dl)
-plot_dharma_resids(fit_dnb2)
 ```
 
 MCMC resids, slowest
@@ -376,40 +393,64 @@ dobs |>
 ```
 
 ```{r predict-on-grid}
-p_grid <- predict(fit_nb2, newdata = grid_all)
+p_grid <- predict(fit_dl, newdata = grid_all)
 ```
 
 ```{r plot-map-func}
 plot_map <- function(dat, column = est) {
-  ggplot(dat, aes(lon, lat, fill = {{ column }})) +
+  g <- ggplot(dat, aes(lon, lat, fill = {{ column }})) +
     geom_raster() +
-    facet_wrap(~year) +
     coord_fixed()
+  if (length(unique(dat$year)) > 1) g <- g + facet_wrap(vars(year))
+  g
 }
 ```
 
 ```{r plot-est}
-plot_map(p_grid, exp(est)) +
+plot_map(p_grid, plogis(est1) * exp(est2)) +
   scale_fill_viridis_c(trans = "sqrt")
+```
+
+```{r plot-est-zoom}
+p_grid |>
+  filter(year %in% c(1990, 2000, 2015)) |> # pick a few
+  plot_map(plogis(est1) * exp(est2)) +
+  scale_fill_viridis_c(trans = "sqrt")
+```
+
+```{r plot-est1}
+plot_map(p_grid, plogis(est1)) +
+  scale_fill_viridis_c(option = "C")
 ```
 
 ```{r plot-est2}
-p_grid |>
-  filter(year %in% c(1990, 2000, 2015)) |> # pick a few
-  plot_map(exp(est)) +
-  scale_fill_viridis_c(trans = "sqrt")
+plot_map(p_grid, exp(est2)) +
+  scale_fill_viridis_c(option = "D", trans = "sqrt")
 ```
 
-```{r plot-omega}
+```{r plot-omega1}
 p_grid |>
   filter(year == min(p_grid$year)) |> # pick any one
-  plot_map(omega_s) +
+  plot_map(omega_s1) +
   scale_fill_gradient2()
 ```
 
-```{r plot-eps, eval="epsilon_st" %in% names(p_grid)}
+```{r plot-omega2}
 p_grid |>
-  plot_map(epsilon_st) +
+  filter(year == min(p_grid$year)) |> # pick any one
+  plot_map(omega_s2) +
+  scale_fill_gradient2()
+```
+
+```{r plot-eps1, eval="epsilon_st1" %in% names(p_grid)}
+p_grid |>
+  plot_map(epsilon_st1) +
+  scale_fill_gradient2()
+```
+
+```{r plot-eps2, eval="epsilon_st1" %in% names(p_grid)}
+p_grid |>
+  plot_map(epsilon_st2) +
   scale_fill_gradient2()
 ```
 
@@ -432,13 +473,15 @@ filter(grid_all, year %in% c(2000)) |> # pick one; very similar
 ```
 
 ```{r cache-check-index, echo=FALSE}
-index_file <- here::here("data-generated", paste0(fleet, params$species, "-", "index.rds"))
+index_file <- file_name_maker(type = 'index', fleet = fleet,
+  family = c("all"), 
+  sp = 'on', st = params$spatiotemporal, knots = knots, share_range = params$share_range)
 do_calc_index <- !file.exists(index_file)
 ```
 
 ```{r models-list}
-models <- list(fit_nb2, fit_dg, fit_dl, fit_dnb2)
-names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma", "Delta-NB2")
+models <- list(fit_nb2, fit_dg, fit_dl)
+names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma")
 ```
 
 ```{r calc-indices, eval=do_calc_index}
@@ -450,7 +493,9 @@ calculate_index <- function(x) {
   ind <- sdmTMB::get_index(pred, bias_correct = TRUE)
   ind
 }
+tictoc::tic()
 ind <- purrr::map_dfr(models, calculate_index, .id = "model")
+tictoc::toc()
 ```
 
 ```{r saverds-index, eval=do_calc_index, echo=FALSE}
@@ -461,18 +506,11 @@ saveRDS(ind, index_file)
 ind <- readRDS(index_file)
 ```
 
-```{r plot-indices, echo=FALSE}
+```{r plot-indices-prep, echo=FALSE}
 true <- group_by(dlog, year) |>
   summarize(swo = sum(swo), bum = sum(bum),
     type = "simulated", model = "simulated")
 true$est <- true[[params$species]]
-
-# both <- left_join(
-#   select(dobs, year, month, lat, lon, hooks, bum, swo),
-#   distinct(select(dlog, year, month, lat, lon, hooks, bum, swo))
-#   )
-# nrow(both)
-# nrow(dobs)
 
 temp <- ind |>
   mutate(type = "predicted")
@@ -486,7 +524,9 @@ temp <- temp |> group_by(model) |>
 
 temp <- temp |>
   bind_rows(true)
+```
 
+```{r plot-indices, echo=FALSE}
 cols <- RColorBrewer::brewer.pal(length(models), "Dark2")
 names(cols) <- names(models)
 cols <- c(cols, c("simulated" = "#000000"))
@@ -508,10 +548,11 @@ temp |>
   )) +
   geom_ribbon(alpha = 0.5, colour = NA) +
   geom_line() +
-  geom_line(data = true |> select(-model), lty = 2, colour = "black", inherit.aes = FALSE, mapping = aes(year, est)) +
+  geom_line(data = true |> select(-model), lty = 2, colour = "black", 
+    inherit.aes = FALSE, mapping = aes(year, est)) +
   gg_scales +
   gg_labs +
-  facet_wrap(vars(model), scales = "free_y")
+  facet_wrap(vars(model), scales = "free_y", nrow = 2)
 
 temp |>
   ggplot(aes(year, est,
@@ -526,6 +567,14 @@ temp |>
 
 ```{r coverage-raw}
 left_join(ind, select(true, year, true = est)) |>
+  mutate(
+    covered = true < upr & true > lwr
+  ) |>
+  group_by(model) |>
+  summarise(coverage = mean(covered))
+
+left_join(ind, select(true, year, true = est)) |>
+  mutate(upr = exp(log_est + qnorm(0.75) * se), lwr = exp(log_est + qnorm(0.25) * se)) |> 
   mutate(
     covered = true < upr & true > lwr
   ) |>
@@ -563,10 +612,3 @@ temp |>
   group_by(model) |>
   summarise(coverage = mean(covered))
 ```
-
-How much easy to read code vs. work for many scenarios in a report?
-One thoroughly or a report for each scenario or in between? 1 in depth, do the others without explanation?
-
-e.g. explore aniso vs. none, families etc.
-could do efficiently - hard to read code
-or do a few with easy to read code
