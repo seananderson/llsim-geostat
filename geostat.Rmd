@@ -6,7 +6,7 @@ params:
   use_sets: TRUE
   fleets: !r c(1)
   species: 'swo'
-  spatiotemporal: "off"
+  spatiotemporal: "iid"
 ---
 
 ```{r setup, include=FALSE}
@@ -77,7 +77,6 @@ if (us_version) {
 }
 ```
 
-
 ```{r sf-map-dat, warning=FALSE}
 map_data <- rnaturalearth::ne_countries(
   scale = "small",
@@ -137,7 +136,7 @@ ggplot() +
   coord_sf(expand = FALSE)
 ```
 
-```{r plot-dat-bycatch-year}
+```{r plot-dat-bycatch-year, echo=FALSE}
 # bounding_ylim <- range(dlog$lat) + c(-10, 10)
 # bounding_xlim <- range(dlog$lon) + c(-10, 20)
 #
@@ -199,7 +198,8 @@ combine both; could be just one or the other
 
 ```{r mesh}
 dall <- bind_rows(select(dobs, X, Y), select(dlog, X, Y))
-mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = 400) # cutoff?
+knots <- 300
+mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = knots) # cutoff?
 mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
 # mesh$mesh$n
 ```
@@ -210,10 +210,15 @@ mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
 ggplot() +
   geom_point(data = dobs, mapping = aes(X, Y), alpha = 0.2) +
   inlabru::gg(mesh$mesh) +
-  coord_fixed()
+  coord_fixed() +
+  theme_light()
 ```
 
-```{r check-data}
+```{r theme-light}
+theme_set(theme_light())
+```
+
+```{r check-data, eval=FALSE, echo=FALSE}
 table(dobs$light_f)
 table(dobs$year_f)
 table(dobs$season_f)
@@ -222,10 +227,6 @@ table(dobs$season_f)
 group_by(dobs, year) |>
   summarise(pos_swo = mean(swo > 0), pos_bum = mean(bum > 0), n = n()) |>
   as.data.frame()
-
-# table(dobs$year, dobs$season)
-# table(dobs$year, dobs$light_f)
-# table(dobs$light_f, dobs$season_f)
 ```
 
 Anisotropy: 
@@ -247,7 +248,7 @@ files_base <- c(
 )
 
 fleet <- if (us_version) "us-" else "all-"
-files_base <- paste0(fleet, params$species, "-", files_base)
+files_base <- paste0(fleet, params$species, "-", files_base, "-", knots)
 files <- paste0(here::here("data-generated/"), files_base, ".rds")
 do_fit <- any(!file.exists(files))
 ```
@@ -266,7 +267,8 @@ fit_nb2 <- sdmTMB(
   control = sdmTMBcontrol(newton_loops = 1),
   silent = FALSE
 )
-# m_tw <- update(fit_nb2, family = tweedie())
+
+# m_tw <- update(fit_nb2, formula = bycatch ~ year_f + season_f, spatiotemporal = "off", family = tweedie())
 fit_dg <- update(fit_nb2, family = delta_gamma())
 fit_dl <- update(fit_nb2, family = delta_lognormal())
 fit_dnb2 <- update(fit_nb2, family = delta_truncated_nbinom2())
@@ -286,47 +288,48 @@ fit_dl <- readRDS(files[3])
 fit_dnb2 <- readRDS(files[4])
 ```
 
-```{r pring-nb2}
+```{r pring-nb2, message=TRUE}
 print(fit_nb2)
 sanity(fit_nb2)
 ```
 
-```{r print-dg}
+```{r print-dg, message=TRUE}
 print(fit_dg)
 sanity(fit_dg)
 ```
 
-```{r print-dl}
+```{r print-dl, message=TRUE}
 print(fit_dl)
 sanity(fit_dl)
 ```
 
-```{r print-dnb2}
+```{r print-dnb2, message=TRUE}
 print(fit_dnb2)
 sanity(fit_dnb2)
 ```
 
 ```{r aic}
-AIC(fit_nb2, fit_dg, fit_dl, fit_dnb2)
+AIC(fit_nb2, fit_dg, fit_dl, fit_dnb2) |> 
+  arrange(AIC)
 ```
 
 Could do cross validation with `sdmTMB_cv()`, but will not be fast here.
 
-```{r plot-aniso}
+```{r plot-aniso, out.width="60%"}
 sdmTMB:::plot_anisotropy2(fit_nb2)
 sdmTMB:::plot_anisotropy2(fit_dg)
 sdmTMB:::plot_anisotropy2(fit_dl)
 sdmTMB:::plot_anisotropy2(fit_dnb2)
 ```
 
-```{r ggeffect, eval=FALSE}
+```{r ggeffect, eval=FALSE, echo=FALSE}
 # ggeffects::ggeffect(fit_nb2, terms = "light_f") |> plot()
 # ggeffects::ggeffect(fit_nb2, terms = "season_f") |> plot()
 # ggeffects::ggeffect(fit_nb2, terms = "year_f") |> plot()
 # ggeffects::ggeffect(fit_nb2, terms = "hbf") |> plot()
 ```
 
-```{r quant-resids, out.width="30%"}
+```{r quant-resids, out.width="40%", fig.width=5}
 plot_resids <- function(x) {
   r <- residuals(x)
   qqnorm(r)
@@ -364,9 +367,9 @@ r_mcmc <- residuals(
 ```{r spatial-residuals}
 dobs$resid <- residuals(fit_dl)
 dobs |>
-  filter(year %in% range(p_grid$year)) |> # pick a couple
+  filter(year %in% c(1990, 2000, 2015)) |> # pick a few
   ggplot(aes(lon, lat, colour = resid)) +
-  geom_point(size = 0.4) +
+  geom_point(size = 0.8, position = position_jitter(width = 0.25, height = 0.25)) +
   facet_wrap(~year) +
   scale_colour_gradient2() +
   coord_equal()
@@ -392,14 +395,14 @@ plot_map(p_grid, exp(est)) +
 
 ```{r plot-est2}
 p_grid |>
-  filter(year %in% range(p_grid$year)) |> # pick two
+  filter(year %in% c(1990, 2000, 2015)) |> # pick a few
   plot_map(exp(est)) +
   scale_fill_viridis_c(trans = "sqrt")
 ```
 
 ```{r plot-omega}
 p_grid |>
-  filter(year == min(p_grid$year)) |> # pick one
+  filter(year == min(p_grid$year)) |> # pick any one
   plot_map(omega_s) +
   scale_fill_gradient2()
 ```
@@ -420,16 +423,22 @@ p_grid |>
 pred <- predict(fit_dl, newdata = grid_all, nsim = 100)
 grid_all$cv <- apply(pred, 1, function(x) sd(exp(x)) / mean(exp(x)))
 
-filter(grid_all, year == min(dobs$year)) |> # picking one
+filter(grid_all, year %in% c(2000)) |> # pick one; very similar
   ggplot(aes(lon, lat, fill = cv)) +
   geom_raster() +
   scale_fill_viridis_c(option = "A", trans = "log10") +
-  coord_equal()
+  coord_equal() +
+  facet_wrap(~year)
 ```
 
 ```{r cache-check-index, echo=FALSE}
 index_file <- here::here("data-generated", paste0(fleet, params$species, "-", "index.rds"))
 do_calc_index <- !file.exists(index_file)
+```
+
+```{r models-list}
+models <- list(fit_nb2, fit_dg, fit_dl, fit_dnb2)
+names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma", "Delta-NB2")
 ```
 
 ```{r calc-indices, eval=do_calc_index}
@@ -441,8 +450,6 @@ calculate_index <- function(x) {
   ind <- sdmTMB::get_index(pred, bias_correct = TRUE)
   ind
 }
-models <- list(fit_nb2, fit_dg, fit_dl, fit_dnb2)
-names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma", "Delta-NB2")
 ind <- purrr::map_dfr(models, calculate_index, .id = "model")
 ```
 
@@ -454,7 +461,7 @@ saveRDS(ind, index_file)
 ind <- readRDS(index_file)
 ```
 
-```{r plot-indices}
+```{r plot-indices, echo=FALSE}
 true <- group_by(dlog, year) |>
   summarize(swo = sum(swo), bum = sum(bum),
     type = "simulated", model = "simulated")
@@ -468,9 +475,44 @@ true$est <- true[[params$species]]
 # nrow(dobs)
 
 temp <- ind |>
-  mutate(type = "predicted") |>
+  mutate(type = "predicted")
+
+temp <- temp |> group_by(model) |> 
+  mutate(
+    any_not_converged = 
+      sum(is.infinite(upr)) > 0 | sum(lwr == 0) > 0
+    ) |> 
+  filter(!any_not_converged)
+
+temp <- temp |>
   bind_rows(true)
 
+cols <- RColorBrewer::brewer.pal(length(models), "Dark2")
+names(cols) <- names(models)
+cols <- c(cols, c("simulated" = "#000000"))
+
+gg_scales <- list(scale_color_manual(values = cols),
+  scale_fill_manual(values = cols),
+  scale_linetype_manual(values = c("predicted" = 1, "simulated" = 2)),
+  coord_cartesian(ylim = c(0, NA)))
+
+gg_labs <- list(ylab("Bycatch total"),
+  xlab("Year"),
+  labs(lty = "Type", colour = "Model", fill = "Model"))
+
+temp |>
+  filter(model != "simulated") |> 
+  ggplot(aes(year, est,
+    ymin = lwr, ymax = upr, lty = type,
+    colour = model, fill = model
+  )) +
+  geom_ribbon(alpha = 0.5, colour = NA) +
+  geom_line() +
+  geom_line(data = true |> select(-model), lty = 2, colour = "black", inherit.aes = FALSE, mapping = aes(year, est)) +
+  gg_scales +
+  gg_labs +
+  facet_wrap(vars(model), scales = "free_y")
+
 temp |>
   ggplot(aes(year, est,
     ymin = lwr, ymax = upr, lty = type,
@@ -478,32 +520,20 @@ temp |>
   )) +
   geom_ribbon(alpha = 0.5, colour = NA) +
   geom_line() +
-  ylab("Bycatch total") +
-  xlab("Year") +
-  labs(lty = "Type") +
-  scale_color_brewer(palette = "Set2")
+  gg_scales +
+  gg_labs
+```
 
-temp |>
-  filter(model != "NB2") |>
-  ggplot(aes(year, est,
-    ymin = lwr, ymax = upr, lty = type,
-    colour = model, fill = model
-  )) +
-  geom_ribbon(alpha = 0.5, colour = NA) +
-  geom_line() +
-  ylab("Bycatch total") +
-  xlab("Year") +
-  labs(colour = "Model", fill = "Model") +
-  scale_color_brewer(palette = "Set2")
-
-# raw coverage
+```{r coverage-raw}
 left_join(ind, select(true, year, true = est)) |>
   mutate(
     covered = true < upr & true > lwr
   ) |>
   group_by(model) |>
   summarise(coverage = mean(covered))
+```
 
+```{r centered, eval=FALSE, echo=FALSE}
 temp <- left_join(ind, select(true, year, true = est)) |>
   group_by(model) |>
   mutate(
@@ -522,10 +552,9 @@ temp |>
   geom_line() +
   geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.5, colour = NA) +
   geom_line(aes(y = true), lty = 2) +
-  ylab("Centered predicted bycatch") +
-  xlab("Year") +
-  labs(colour = "Model", fill = "Model") +
-  scale_color_brewer(palette = "Set2")
+  gg_labs +
+  gg_scales +
+  ylab("Centered bycatch")
 
 # centered coverage
 temp |>
