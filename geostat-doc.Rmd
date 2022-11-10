@@ -1,0 +1,183 @@
+---
+title: "LLSIM geostat"
+output:
+  bookdown::pdf_document2: default
+  bookdown::word_document2: default
+highlight: "monochrome"
+csl: csas.csl
+bibliography: refs.bib
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding,
+  output_dir = ".", output_format = "all") })
+header-includes:
+  \usepackage{bm}
+  \usepackage{amssymb}
+---
+
+\newcommand{\s}{\boldsymbol{s}}
+
+Paraphrase the following! (from sdmTMB manual)
+
+$$
+\begin{aligned}
+\mathbb{E}[y_{\s,t}] &= \mu_{\s,t},\\
+\mu_{\bm{s},t} &=
+f^{-1} \left( \bm{X}_{\bm{s},t} \bm{\beta} +
+O_{\s,t} +
+\omega_{\s} +
+\epsilon_{\s,t} \right),
+\end{aligned}
+$$
+
+where
+
+* $y_{\s,t}$ represents the response data at point $\s$ and time $t$;
+* $\mu$ represents the mean;
+* $f$ represents a link function (e.g., log or logit) and $f^{-1}$ represents its inverse;
+* $\bm{X}$ represents a design matrix;
+* $\bm{\beta}$ represents a vector of fixed-effect coefficients;
+* $O_{\s,t}$ represents an offset: a covariate (usually log transformed) with a coefficient fixed at one;
+* $\omega_{\bm{s}}$ represents a spatial component (a random field), $\omega_{\s} \sim \mathrm{MVN}(\bm{0},\bm{\Sigma}_\omega)$; and
+* $\epsilon_{\s,t}$ represents a spatiotemporal component (a random field), $\epsilon_{\s,t} \sim \mathrm{MVN}(\bm{0},\bm{\Sigma}_{\epsilon})$.
+
+
+$$
+\begin{aligned}
+\boldsymbol{\omega} &\sim \operatorname{MVNormal} \left( \boldsymbol{0}, \boldsymbol{\Sigma}_\omega \right),\\
+\end{aligned}
+$$
+
+Internally, the random fields follow a Gaussian Markov random field (GMRF)
+
+$$
+\boldsymbol{\omega} \sim \mathrm{MVNormal}\left(\boldsymbol{0}, \sigma_\omega^2 \boldsymbol{Q}^{-1}_\omega\right),
+$$
+where $\boldsymbol{Q}_\omega$ is a sparse precision matrix and $\sigma_\omega^2$ is the marginal variance.
+
+IID spatiotemporal random fields can be represented as
+
+$$
+\begin{aligned}
+\boldsymbol{\epsilon_{t}} &\sim \operatorname{MVNormal} \left( \boldsymbol{0}, \boldsymbol{\Sigma}_{\epsilon} \right).
+\end{aligned}
+$$
+
+where $\epsilon_{\s,t}$ represent random field deviations at point $\s$ and time $t$.
+The random fields are assumed independent across time steps.
+
+Similarly to the spatial random fields, these spatiotemporal random fields are parameterized internally with a sparse precision matrix ($\boldsymbol{Q}_\epsilon$).
+
+The values of the spatial variables at the knots are multiplied by a projection matrix $\boldsymbol{A}$ that bilinearly interpolates from the knot locations to the values at the locations of the observed or predicted data [@lindgren2015]
+
+$$
+\boldsymbol{\omega}^* = \boldsymbol{A} \boldsymbol{\omega},
+$$
+where $\boldsymbol{\omega}^*$ represents the values of the spatial random fields at the observed locations or predicted data locations.
+The matrix $\boldsymbol{A}$ has a row for each data point or prediction point and a column for each knot.
+Three non-zero elements on each row define the weight of the neighbouring 3 knot locations for location $\s$.
+The same bilinear interpolation happens for any spatiotemporal random fields
+
+There are a number of ways to implement anisotropic covariance [@fuglstad2015a], and we adopt a 2-parameter rotation matrix $\textbf{H}$. The elements of $\textbf{H}$ are defined by the parameter vector $\boldsymbol{x}$ so that $H_{1,1} = x_{1}$, $H_{1,2} = H_{2,1} = x_{2}$ and $H_{2,2} = (1 + x_{2}^2) / x_{1}$.
+ 
+The sdmTMB model is fit by maximum marginal likelihood.
+Internally, a TMB [@kristensen2016] model template calculates the marginal log likelihood and its gradient, and the negative log likelihood is minimized via the non-linear optimization routine `stats::nlminb()` in R [@gay1990; @r2021].
+Random effects are estimated at values that maximize the log likelihood conditional on the estimated fixed effects and are integrated over via the Laplace approximation [@kristensen2016].
+
+# References
+
+::: {#refs}
+:::
+
+\clearpage
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  cache = FALSE,
+  autodep = TRUE,
+  fig.width = 9,
+  fig.asp = 0.618,
+  out.width = "6in",
+  fig.pos = "ht",
+  cache.comments = TRUE,
+  dev = "png",
+  dpi = 150,
+  fig.align = "center"
+  # optipng = "-strip all"
+)
+# knitr::knit_hooks$set(optipng = knitr::hook_optipng)
+```
+
+```{r libs}
+# library(dplyr)
+# library(sdmTMB)
+library(knitr)
+library(here)
+library(dplyr)
+```
+
+```{r all-stats, results='asis'}
+ind_table <- readRDS(here("data-generated/ind-table.rds"))
+print_table <- function(dat, caption) {
+  dat |> summarise(mare = median(abs(re)),
+    # rmse = sqrt(mean(re^2)),
+    mre = mean(re), 
+    coverage = mean(true < upr & true > lwr)) |>
+    ungroup() |>
+    arrange(mare) |>
+    mutate(fields = gsub(" fields", "", fields)) |>
+    mutate(fields = gsub("No", "None", fields)) |>
+    knitr::kable(
+      digits = 2,
+      caption = caption,
+      booktabs = TRUE,
+      col.names = c("Family", "Fields", "MARE", "MRE", "Coverage")
+    )
+}
+print_table(ind_table, caption = "All TODO")
+```
+
+```{r us-stats, results='asis'}
+ind_table_us <- readRDS(here("data-generated/ind-table-us.rds"))
+print_table(ind_table_us, caption = "US TODO")
+```
+
+\clearpage
+
+```{r mesh, fig.cap="Mesh", out.width="4in"}
+include_graphics(here("figs/mesh.png"))
+```
+
+```{r aniso, fig.cap="Aniso", out.width="5in"}
+include_graphics(here("figs/dl-aniso.png"))
+```
+
+```{r qq, fig.cap="QQ", include=FALSE, eval=FALSE}
+include_graphics(here("figs/qq.png"))
+```
+
+```{r omega, fig.cap="Omega"}
+include_graphics(here("figs/omega.png"))
+```
+
+```{r eps, fig.cap="Epsilon"}
+include_graphics(here("figs/epsilon.png"))
+```
+
+```{r all-pred, fig.cap="All prediction"}
+include_graphics(here("figs/dl-all-predicted.png"))
+```
+
+```{r all-ts, fig.cap="All"}
+include_graphics(here("figs/all-ts-comparison.png"))
+```
+
+```{r us-ts, fig.cap="US"}
+include_graphics(here("figs/us-ts-comparison.png"))
+```
+

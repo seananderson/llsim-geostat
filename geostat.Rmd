@@ -6,29 +6,42 @@ params:
   use_sets: TRUE
   fleets: !r c(1, 2, 3)
   species: 'bum'
-  spatiotemporal: "iid"
+  spatiotemporal: "off"
   spatial: "on"
   share_range: TRUE
+  cache_path: "geostat"
+  anisotropy: TRUE
 ---
 
-## TODO
+Settings:
 
-- [ ] add version without spatial/spatiotemporal for comparison
-- [ ] add basic explanation below
-- [ ] figure out nice figs for main writeup
-- [ ] one nice appendix?
+```{r params}
+print(params)
+```
+
+# TODO
+
+- [x] add version without spatial/spatiotemporal for comparison
+- [x] add basic explanation below
+- [-] figure out nice figs for main writeup
 - [ ] compare to Beth's using same metrics?
-- [ ] maybe take the time to run the spatiotemporal all models
-- [ ] make projected plot not look laughable
+- [x] maybe take the time to run the spatiotemporal all models
+- [x] make projected plot not look laughable
 
-## Conclusions
+# Conclusion notes
 
 - seems to need flexibility of a delta model
 - Tweedie often doesn't converge here
 - NB2 can be wildly off high or low
 - seems to be some anisotropy... but think about projection
-- coverage seems a bit low for SWO and a bit high for BUM
-- spatiotemporal component often shrinks to zero for the much rarer BUM bycatch
+- coverage seems a bit low but not too bad
+- coverage worse and metrics worse if no spatiotemporal or no fields at all
+
+# Analysis
+
+```{r check-us, include=FALSE}
+us_version <- identical(params$fleets, 1)
+```
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -45,7 +58,9 @@ knitr::opts_chunk$set(
   fig.pos = "ht",
   cache.comments = TRUE,
   dev = "png",
-  dpi = 150
+  dpi = 150, 
+  cache.path = paste0(params$cache_path, "-cache/"),
+  fig.path = paste0(params$cache_path, "-files/")
   # optipng = "-strip all"
 )
 # knitr::knit_hooks$set(optipng = knitr::hook_optipng)
@@ -58,11 +73,7 @@ library(sdmTMB)
 theme_set(theme_light())
 ```
 
-```{r check-us}
-us_version <- identical(params$fleets, 1)
-```
-
-```{r read-dat}
+```{r read-dat, include=FALSE}
 if (params$use_sets) {
   dobs <- readr::read_csv("data-raw/obsset05.csv")
   dlog <- readr::read_csv("data-raw/logset05.csv")
@@ -84,24 +95,32 @@ dobs$bycatch <- dobs[[params$species]]
 dlog$bycatch <- dlog[[params$species]]
 ```
 
-```{r filter-fleet}
+```{r filter-fleet, include=FALSE}
 dobs <- filter(dobs, fleet %in% params$fleets)
 dlog <- filter(dlog, fleet %in% params$fleets)
 ```
 
-Explain large spatial outliers
+The dataset we are starting with:
 
-```{r filter-us}
+```{r print-data}
+select(dobs, year, month, lat, lon, gear, light, bait, fleet, hbf, hooks, season, bum) |> 
+  glimpse()
+```
+
+```{r filter-us, include=FALSE}
+# Explain large spatial outliers
 if (us_version) {
   dobs <- filter(dobs, lon < 0, lat > -20)
   dlog <- filter(dlog, lon < 0, lat > -20)
 }
 ```
 
-<https://desktop.arcgis.com/en/arcmap/latest/map/projections/equidistant-conic.htm>
-<https://en.wikipedia.org/wiki/Equidistant_conic_projection>
+<!-- <https://desktop.arcgis.com/en/arcmap/latest/map/projections/equidistant-conic.htm> -->
+<!-- <https://en.wikipedia.org/wiki/Equidistant_conic_projection> -->
 
-Go back to Albers?
+We will use a custom Albers equal-area projection with standard parallels set up to be appropriate for these data.
+These types of models are often fit with UTMs, but UTMs are likely not ideal given the data span many UTM zones.
+Future work could evaluate the sensitivity to the projection used.
 
 ```{r project}
 if (us_version) { # US only
@@ -147,7 +166,12 @@ dobs <- temp$dat_sdmTMB
 temp <- project_dat(dlog, .crs, mult = 0.01)
 dlog_sf <- temp$dat_sf
 dlog <- temp$dat_sdmTMB
+saveRDS(dlog_sf, "data-generated/dlog_sf.rds")
+saveRDS(dobs_sf, "data-generated/dobs_sf.rds")
 ```
+
+This is what the observed data (red) and log book data (grey) look like in space across all years combined.
+We're also setting predictors to a standard value for visualization.
 
 ```{r plot-dat-map-log}
 map_data <- rnaturalearth::ne_countries(
@@ -174,17 +198,21 @@ ggplot() +
   gg_coord
 ```
 
+Here the data are plotted by year with blue marlin by catch shown with colour.
+
 ```{r plot-dat-bycatch-year, echo=FALSE}
 ggplot() +
   geom_sf(data = map_data_cropped) +
   geom_point(
-    data = dobs, size = 0.8,
+    data = dobs, size = 0.3,
     mapping = aes(colour = bycatch, x = lon, y = lat)
   ) +
   gg_coord +
   facet_wrap(vars(year)) +
   scale_colour_viridis_c(trans = "log10")
 ```
+
+We will transform several of our predictors to be factors. We could also do this with `as.factor()` on the fly in our models.
 
 ```{r factorize}
 factorize <- function(x) {
@@ -196,6 +224,8 @@ factorize <- function(x) {
 dobs <- factorize(dobs)
 dlog <- factorize(dlog)
 ```
+
+Here, we will come up with a grid visualizing model predictions and model components. We're just taking all unique log book locations across all years and creating a data frame that references those locations every year.
 
 ```{r grid}
 grid <- select(dlog, X, Y) |> distinct()
@@ -210,21 +240,30 @@ grid_all$season_f <- sort(unique(dobs$season_f))[1]
 grid_all$hbf <- mean(dobs$hbf)
 grid_all$year_f <- as.factor(grid_all$year)
 nrow(grid_all)
+if (!us_version) saveRDS(grid_all, file = "data-generated/grid_all.rds")
+if (us_version) saveRDS(grid_all, file = "data-generated/grid_us.rds")
 ```
 
-combine both; could be just one or the other
+Now we will create a mesh that will be used in the SPDE approximation and bilinear interpolation along the triangles as part of the predictive process approach.
+There are several ways we could create this mesh.
+Here, we will create a mesh using a kmeans algorithm applied to the prediction (log-book) data set.
+Often this mesh would be set up based on the observed data only, but we wanted to make sure we had appropriate mesh resolution in areas where there are log-book data but no observer coverage.
+We select approximately 300 knots to achieve a reasonable balance of fine-scale accuracy and computational efficiency.
+Model accuracy will not necessarily improve with increased mesh resolution beyond a certain point.
 
 ```{r mesh}
-dall <- bind_rows(select(dobs, X, Y), select(dlog, X, Y))
+dall <- select(dlog, X, Y)
 knots <- 300
 mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = knots) # cutoff?
 mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
 # mesh$mesh$n
 ```
 
+Here we will visualize the mesh. We could also create a simpler plot with the built in `plot()` method. 
+
 ```{r mesh-gg}
-# plot(mesh$mesh, asp = 1, main = NULL)
-# points(dobs$X ,dobs$Y, pch = ".", col = "red")
+# plot(mesh)
+
 ggplot() +
   geom_point(data = dobs, mapping = aes(X, Y), alpha = 0.2) +
   inlabru::gg(mesh$mesh) +
@@ -247,28 +286,42 @@ group_by(dobs, year) |>
   as.data.frame()
 ```
 
-Anisotropy: 
 
-Priors...
-
-Barriers...
-
-versions without any fields or comparison?
-
-random walk on year?
-
-```{r cache-check, echo=FALSE}
+```{r filenames, echo=FALSE}
 file_name_maker <- function(type, fleet, family, sp, st, knots, share_range) {
   f <- paste(type, fleet, family, "sp", sp, "st", st, "knots", knots, "share_range", share_range, sep = "-")
   here::here("data-generated", paste0(f, ".rds"))
 }
 fleet <- if (us_version) "us" else "all"
+cache <- file_name_maker(type = 'cache', fleet = fleet, 
+  family = c(""), 
+  sp = 'on', st = params$spatiotemporal, knots = knots, share_range = params$share_range)
+```
+
+```{r cache-check, echo=FALSE}
 files <- file_name_maker(type = 'fit', fleet = fleet, 
   family = c("nb2", "dg", "dl"), 
-  sp = 'on', st = params$spatiotemporal, knots = knots, share_range = params$share_range)
+  sp = params$spatial, st = params$spatiotemporal, knots = knots, share_range = params$share_range)
 do_fit <- any(!file.exists(files))
 message(do_fit)
 ```
+
+Now we will fit our models.
+We will structure the model to use:
+
+- a series of main effect (first line: the `formula` argument)
+- our observation data frame (`data`)
+- our mesh (`mesh`)
+- a NB2 negative binomial family (for this first model) (`family`)
+- have an offset for log number of hooks (`offset`)
+- include spatial random fields (`spatial = 'on'`)
+- include independent spatiotemporal random fields (`spatiotemporal = 'iid'`)
+- share or not share the range parameter between the spatial and spatiotemporal fields (`share_range = TRUE` or `share_range = FALSE`)
+- include or not include anisotropy (`anisotropy`), which if included allows the spatial correlation to decay at different rates in different directions
+- include additional optimization with a Newton optimizer (optional, helps convergence here)
+- and to print out model fitting progress (`silent = FALSE`)
+
+We will then use the `update()` method to refit our model with two additional families: delta-Gamma and delta-lognormal.
 
 ```{r fit1, results='hide', eval=do_fit}
 tictoc::tic()
@@ -282,13 +335,12 @@ fit_nb2 <- sdmTMB(
   spatial = params$spatial,
   spatiotemporal = params$spatiotemporal,
   share_range = params$share_range,
-  anisotropy = TRUE,
+  anisotropy = params$anisotropy,
   control = sdmTMBcontrol(newton_loops = 1),
   silent = FALSE
 )
 tictoc::toc()
 
-# m_tw <- update(fit_nb2, formula = bycatch ~ year_f + season_f, spatiotemporal = "off", family = tweedie())
 tictoc::tic()
 fit_dg <- update(fit_nb2, family = delta_gamma())
 tictoc::toc()
@@ -296,7 +348,6 @@ tictoc::toc()
 tictoc::tic()
 fit_dl <- update(fit_nb2, family = delta_lognormal())
 tictoc::toc()
-# fit_dnb2 <- update(fit_nb2, family = delta_truncated_nbinom2())
 ```
 
 ```{r saverds, eval=do_fit, echo=FALSE}
@@ -313,7 +364,7 @@ fit_dl <- readRDS(files[3])
 # fit_dnb2 <- readRDS(files[4])
 ```
 
-```{r pring-nb2, message=TRUE}
+```{r print-nb2, message=TRUE}
 print(fit_nb2)
 sanity(fit_nb2)
 ```
@@ -328,18 +379,32 @@ print(fit_dl)
 sanity(fit_dl)
 ```
 
+The `sanity()` method runs some basic checks and here does not detect any obvious issues.
+
+We can compare the AIC between the models. Here the delta-lognormal model has the lowest AIC.
+However, we should take these with a grain of salt given the extensive random effects included.
+
+A better assessment would be with cross validation with the `sdmTMB_cv()` function.
+However, this would take considerable time and we do not perform that here.
+
 ```{r aic}
 AIC(fit_nb2, fit_dg, fit_dl) |> 
   arrange(AIC)
 ```
 
-Could do cross validation with `sdmTMB_cv()`, but will not be fast here.
+We can visualize the anisotropy:
 
-```{r plot-aniso, out.width="60%"}
-sdmTMB:::plot_anisotropy2(fit_nb2)
-sdmTMB:::plot_anisotropy2(fit_dg)
-sdmTMB:::plot_anisotropy2(fit_dl)
+```{r plot-aniso, out.width="60%", eval=params$anisotropy && params$spatiotemporal != "off"}
+plot_anisotropy(fit_nb2)
+plot_anisotropy(fit_dg)
+plot_anisotropy(fit_dl)
 ```
+
+The ellipses indicate these spatial and spatiotemporal range parameters in any direction.
+The range is the distance at which two data points are effectively independent (~0.13 correlation).
+The ellipses are centered on 0 and the units are the units of the X and Y coordinates, which here are 100 km given the Albers projection.
+In this case, we observe considerable  anisotropy with correlation decaying more quickly in an approximately  latitudinal direction compared to an approximately longitudinal direction.
+We also estimated larger spatial ranges than   spatiotemporal arranges (sold vs. dotted lines) and broader spatial correlation in the binomial model but broader spatiotemporal correlation in the positive model (green vs. orange ellipses).
 
 ```{r ggeffect, eval=FALSE, echo=FALSE}
 # ggeffects::ggeffect(fit_nb2, terms = "light_f") |> plot()
@@ -348,10 +413,14 @@ sdmTMB:::plot_anisotropy2(fit_dl)
 # ggeffects::ggeffect(fit_nb2, terms = "hbf") |> plot()
 ```
 
-```{r quant-resids, out.width="40%", fig.width=5}
+We can look at several types of residuals.
+The fast as to calculate or randomized quantile residuals with the parameters at their MLEs.
+However, these residuals have known problems and can indicate problems even when there are none.
+
+```{r quant-resids, out.width="40%", fig.width=5, fig.asp=1}
 plot_resids <- function(x) {
   r <- residuals(x)
-  qqnorm(r)
+  qqnorm(r, asp = 1)
   qqline(r)
 }
 plot_resids(fit_nb2)
@@ -359,7 +428,7 @@ plot_resids(fit_dg)
 plot_resids(fit_dl)
 ```
 
-Warning...
+We could also use the DHARMa package to calculate simulated residuals:
 
 ```{r dharma, eval=FALSE}
 plot_dharma_resids <- function(x) {
@@ -371,15 +440,18 @@ plot_dharma_resids(fit_dg)
 plot_dharma_resids(fit_dl)
 ```
 
-MCMC resids, slowest
+Or, the most reliable option: calculate randomized quantal residuals with the random effects sampled with MCMC with Stan and the fixed effects fixed at their MLEs.
+This will be quite slow and so we skip this here.
 
 ```{r mcmc-resids, eval=FALSE}
 r_mcmc <- residuals(
-  fit_nb2,
+  fit_dl,
   type = "mle-mcmc",
   mcmc_warmup = 100, mcmc_iter = 200
 )
 ```
+
+We can visualize the residuals in space:
 
 ```{r spatial-residuals}
 dobs$resid <- residuals(fit_dl)
@@ -392,9 +464,13 @@ dobs |>
   coord_equal()
 ```
 
+Next we will predict on our consistent grid; this is just for visualization.
+
 ```{r predict-on-grid}
 p_grid <- predict(fit_dl, newdata = grid_all)
 ```
+
+Here's a small function to help us make our plots:
 
 ```{r plot-map-func}
 plot_map <- function(dat, column = est) {
@@ -406,10 +482,15 @@ plot_map <- function(dat, column = est) {
 }
 ```
 
-```{r plot-est}
+This is the overall predicted bycatch in space over time.
+For the delta models, this combines both components.
+
+```{r plot-est, fig.asp=1}
 plot_map(p_grid, plogis(est1) * exp(est2)) +
   scale_fill_viridis_c(trans = "sqrt")
 ```
+
+Here we will zoom in on three arbitrary years so that they are easier to look at:
 
 ```{r plot-est-zoom}
 p_grid |>
@@ -418,37 +499,49 @@ p_grid |>
   scale_fill_viridis_c(trans = "sqrt")
 ```
 
-```{r plot-est1}
+This is the delta model first component: the probability of observing any bycatch:
+
+```{r plot-est1, fig.asp=1}
 plot_map(p_grid, plogis(est1)) +
   scale_fill_viridis_c(option = "C")
 ```
 
-```{r plot-est2}
+This is the expected bycatch conditional on observing any bycatch:
+
+```{r plot-est2, fig.asp=1}
 plot_map(p_grid, exp(est2)) +
   scale_fill_viridis_c(option = "D", trans = "sqrt")
 ```
 
-```{r plot-omega1}
+These are the spatial random effects from the binomial component of the delta model:
+
+```{r plot-omega1, eval="omega_s1" %in% names(p_grid)}
 p_grid |>
   filter(year == min(p_grid$year)) |> # pick any one
   plot_map(omega_s1) +
   scale_fill_gradient2()
 ```
 
-```{r plot-omega2}
+These are the spatial random effects from the positive component of the delta model:
+
+```{r plot-omega2, eval="omega_s2" %in% names(p_grid)}
 p_grid |>
   filter(year == min(p_grid$year)) |> # pick any one
   plot_map(omega_s2) +
   scale_fill_gradient2()
 ```
 
-```{r plot-eps1, eval="epsilon_st1" %in% names(p_grid)}
+These are the spatiotemporal random effects from the binomial component of the delta model:
+
+```{r plot-eps1, eval="epsilon_st1" %in% names(p_grid), fig.asp=1}
 p_grid |>
   plot_map(epsilon_st1) +
   scale_fill_gradient2()
 ```
 
-```{r plot-eps2, eval="epsilon_st1" %in% names(p_grid)}
+These are the spatiotemporal random effects from the positive component of the delta model:
+
+```{r plot-eps2, eval="epsilon_st2" %in% names(p_grid), fig.asp=1}
 p_grid |>
   plot_map(epsilon_st2) +
   scale_fill_gradient2()
@@ -459,6 +552,9 @@ p_grid |>
 # mean(s == 0)
 # mean(dobs$swo == 0)
 ```
+
+The fastest way to visualize uncertainty in space is to simulate from the joint precision matrix of the parameter space and calculate a measure of uncertainty from those draws.
+Here, we will calculate the coefficient of variation and plot it for an arbitrary year since the uncertainty looks relatively similar across years.
 
 ```{r plot-cv}
 pred <- predict(fit_dl, newdata = grid_all, nsim = 100)
@@ -475,14 +571,19 @@ filter(grid_all, year %in% c(2000)) |> # pick one; very similar
 ```{r cache-check-index, echo=FALSE}
 index_file <- file_name_maker(type = 'index', fleet = fleet,
   family = c("all"), 
-  sp = 'on', st = params$spatiotemporal, knots = knots, share_range = params$share_range)
+  sp = params$spatial, st = params$spatiotemporal, knots = knots, share_range = params$share_range)
 do_calc_index <- !file.exists(index_file)
 ```
+
+Next we will combine our models into a list so we can iterate over the list when we calculate the predicted bycatch total.
 
 ```{r models-list}
 models <- list(fit_nb2, fit_dg, fit_dl)
 names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma")
 ```
+
+Here we create a small function that predicts from our models onto the logbook data and passes those predictions through the `get_index()` function in sdmTMB.
+`get_index()` sums the predictions within each year and calculates uncertainty on those predictions using the generalized delta method and a bias correction that accounts for the non-linear (exp) transformation of the random effects.
 
 ```{r calc-indices, eval=do_calc_index}
 calculate_index <- function(x) {
@@ -506,7 +607,9 @@ saveRDS(ind, index_file)
 ind <- readRDS(index_file)
 ```
 
-```{r plot-indices-prep, echo=FALSE}
+Here we will calculate the true total bycatch and combine that data with our calculated indexes.
+
+```{r plot-indices-prep, echo=TRUE}
 true <- group_by(dlog, year) |>
   summarize(swo = sum(swo), bum = sum(bum),
     type = "simulated", model = "simulated")
@@ -525,6 +628,8 @@ temp <- temp |> group_by(model) |>
 temp <- temp |>
   bind_rows(true)
 ```
+
+Plot the predicted and actual totals:
 
 ```{r plot-indices, echo=FALSE}
 cols <- RColorBrewer::brewer.pal(length(models), "Dark2")
@@ -565,6 +670,8 @@ temp |>
   gg_labs
 ```
 
+And calculate the coverage from our 95% confidence intervals.
+
 ```{r coverage-raw}
 left_join(ind, select(true, year, true = est)) |>
   mutate(
@@ -572,7 +679,9 @@ left_join(ind, select(true, year, true = est)) |>
   ) |>
   group_by(model) |>
   summarise(coverage = mean(covered))
+```
 
+```{r coverage50, eval=FALSE, echo=FALSE}
 left_join(ind, select(true, year, true = est)) |>
   mutate(upr = exp(log_est + qnorm(0.75) * se), lwr = exp(log_est + qnorm(0.25) * se)) |> 
   mutate(

@@ -2,3 +2,11 @@
 *.rds
 .Rproj.user
 reference/
+*.rda
+*.rdx
+*.RData
+*.rdb
+*cache*
+*.docx
+*.pdf
+
