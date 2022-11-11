@@ -6,9 +6,9 @@ params:
   use_sets: TRUE
   fleets: !r c(1, 2, 3)
   species: 'bum'
-  spatiotemporal: "off"
+  spatiotemporal: "iid"
   spatial: "on"
-  share_range: TRUE
+  share_range: FALSE
   cache_path: "geostat"
   anisotropy: TRUE
 ---
@@ -30,12 +30,14 @@ print(params)
 
 # Conclusion notes
 
-- seems to need flexibility of a delta model
 - Tweedie often doesn't converge here
-- NB2 can be wildly off high or low
-- seems to be some anisotropy... but think about projection
-- coverage seems a bit low but not too bad
+- seems to be strong anisotropy... but think about projection
 - coverage worse and metrics worse if no spatiotemporal or no fields at all
+- convergence can be finicky with properties of mesh! priors would help
+- exactly which family comes out on top is sensitive to the mesh
+- all decent families
+- just spatial gets you most of the way there
+- + spatiotemporal helps a bit and mostly with appropriate CI coverage
 
 # Analysis
 
@@ -74,6 +76,7 @@ theme_set(theme_light())
 ```
 
 ```{r read-dat, include=FALSE}
+dir.create("data-generated", showWarnings = FALSE)
 if (params$use_sets) {
   dobs <- readr::read_csv("data-raw/obsset05.csv")
   dlog <- readr::read_csv("data-raw/logset05.csv")
@@ -109,10 +112,10 @@ select(dobs, year, month, lat, lon, gear, light, bait, fleet, hbf, hooks, season
 
 ```{r filter-us, include=FALSE}
 # Explain large spatial outliers
-if (us_version) {
-  dobs <- filter(dobs, lon < 0, lat > -20)
-  dlog <- filter(dlog, lon < 0, lat > -20)
-}
+# if (us_version) {
+#   dobs <- filter(dobs, lon < 0, lat > -20)
+#   dlog <- filter(dlog, lon < 0, lat > -20)
+# }
 ```
 
 <!-- <https://desktop.arcgis.com/en/arcmap/latest/map/projections/equidistant-conic.htm> -->
@@ -252,18 +255,20 @@ We select approximately 300 knots to achieve a reasonable balance of fine-scale 
 Model accuracy will not necessarily improve with increased mesh resolution beyond a certain point.
 
 ```{r mesh}
-dall <- select(dlog, X, Y)
 knots <- 300
-mesh_all <- make_mesh(dall, c("X", "Y"), n_knots = knots) # cutoff?
+mesh_all <- make_mesh(dlog, c("X", "Y"), n_knots = knots) # cutoff?
+
+if (!us_version) mesh_all <- make_mesh(dlog, c("X", "Y"), cutoff = 5) # cutoff?
+if (us_version) mesh_all <- make_mesh(dlog, c("X", "Y"), cutoff = 3) # cutoff?
+
 mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
-# mesh$mesh$n
+mesh$mesh$n
 ```
 
 Here we will visualize the mesh. We could also create a simpler plot with the built in `plot()` method. 
 
 ```{r mesh-gg}
 # plot(mesh)
-
 ggplot() +
   geom_point(data = dobs, mapping = aes(X, Y), alpha = 0.2) +
   inlabru::gg(mesh$mesh) +
@@ -300,7 +305,7 @@ cache <- file_name_maker(type = 'cache', fleet = fleet,
 
 ```{r cache-check, echo=FALSE}
 files <- file_name_maker(type = 'fit', fleet = fleet, 
-  family = c("nb2", "dg", "dl"), 
+  family = c("nb2", "dg", "dl", "nb1"), 
   sp = params$spatial, st = params$spatiotemporal, knots = knots, share_range = params$share_range)
 do_fit <- any(!file.exists(files))
 message(do_fit)
@@ -321,12 +326,16 @@ We will structure the model to use:
 - include additional optimization with a Newton optimizer (optional, helps convergence here)
 - and to print out model fitting progress (`silent = FALSE`)
 
-We will then use the `update()` method to refit our model with two additional families: delta-Gamma and delta-lognormal.
+We will then use the `update()` method to refit our model with three additional families: delta-Gamma and delta-lognormal and NB1 negative binomial (where variance scales linearly with the mean instead of quadratically).
+
+```{r cores}
+# TMB::openmp(n = 1L, DLL = "sdmTMB") # optional; use 3 cores
+```
 
 ```{r fit1, results='hide', eval=do_fit}
 tictoc::tic()
 fit_nb2 <- sdmTMB(
-  bycatch ~ year_f + season_f + hbf + light_f,
+  bycatch ~ year_f + season_f + log(hbf) + light_f,
   data = dobs,
   mesh = mesh,
   family = nbinom2(),
@@ -340,20 +349,22 @@ fit_nb2 <- sdmTMB(
   silent = FALSE
 )
 tictoc::toc()
+fit_nb1 <- update(fit_nb2, family = nbinom1())
 
-tictoc::tic()
+if (!us_version) {
 fit_dg <- update(fit_nb2, family = delta_gamma())
-tictoc::toc()
-
-tictoc::tic()
 fit_dl <- update(fit_nb2, family = delta_lognormal())
-tictoc::toc()
+} else {
+  fit_dl <- update(fit_nb2, family = delta_lognormal(), spatiotemporal = "off")
+  fit_dg <- update(fit_nb2, family = delta_gamma(), spatiotemporal = "off")
+}
 ```
 
 ```{r saverds, eval=do_fit, echo=FALSE}
 saveRDS(fit_nb2, files[1])
 saveRDS(fit_dg, files[2])
 saveRDS(fit_dl, files[3])
+saveRDS(fit_nb1, files[4])
 # saveRDS(fit_dnb2, files[4])
 ```
 
@@ -361,12 +372,18 @@ saveRDS(fit_dl, files[3])
 fit_nb2 <- readRDS(files[1])
 fit_dg <- readRDS(files[2])
 fit_dl <- readRDS(files[3])
+fit_nb1 <- readRDS(files[4])
 # fit_dnb2 <- readRDS(files[4])
 ```
 
 ```{r print-nb2, message=TRUE}
 print(fit_nb2)
 sanity(fit_nb2)
+```
+
+```{r print-nb1, message=TRUE}
+print(fit_nb1)
+sanity(fit_nb1)
 ```
 
 ```{r print-dg, message=TRUE}
@@ -388,7 +405,7 @@ A better assessment would be with cross validation with the `sdmTMB_cv()` functi
 However, this would take considerable time and we do not perform that here.
 
 ```{r aic}
-AIC(fit_nb2, fit_dg, fit_dl) |> 
+AIC(fit_nb2, fit_nb1, fit_dg, fit_dl) |> 
   arrange(AIC)
 ```
 
@@ -396,6 +413,7 @@ We can visualize the anisotropy:
 
 ```{r plot-aniso, out.width="60%", eval=params$anisotropy && params$spatiotemporal != "off"}
 plot_anisotropy(fit_nb2)
+plot_anisotropy(fit_nb1)
 plot_anisotropy(fit_dg)
 plot_anisotropy(fit_dl)
 ```
@@ -404,7 +422,7 @@ The ellipses indicate these spatial and spatiotemporal range parameters in any d
 The range is the distance at which two data points are effectively independent (~0.13 correlation).
 The ellipses are centered on 0 and the units are the units of the X and Y coordinates, which here are 100 km given the Albers projection.
 In this case, we observe considerable  anisotropy with correlation decaying more quickly in an approximately  latitudinal direction compared to an approximately longitudinal direction.
-We also estimated larger spatial ranges than   spatiotemporal arranges (sold vs. dotted lines) and broader spatial correlation in the binomial model but broader spatiotemporal correlation in the positive model (green vs. orange ellipses).
+We also estimated larger spatial ranges than spatiotemporal ranges (sold vs. dotted lines) and broader spatial correlation in the binomial model but broader spatiotemporal correlation in the positive model (green vs. orange ellipses).
 
 ```{r ggeffect, eval=FALSE, echo=FALSE}
 # ggeffects::ggeffect(fit_nb2, terms = "light_f") |> plot()
@@ -424,6 +442,7 @@ plot_resids <- function(x) {
   qqline(r)
 }
 plot_resids(fit_nb2)
+plot_resids(fit_nb1)
 plot_resids(fit_dg)
 plot_resids(fit_dl)
 ```
@@ -436,6 +455,7 @@ plot_dharma_resids <- function(x) {
   dharma_residuals(s, x)
 }
 plot_dharma_resids(fit_nb2)
+plot_dharma_resids(fit_nb1)
 plot_dharma_resids(fit_dg)
 plot_dharma_resids(fit_dl)
 ```
@@ -445,7 +465,7 @@ This will be quite slow and so we skip this here.
 
 ```{r mcmc-resids, eval=FALSE}
 r_mcmc <- residuals(
-  fit_dl,
+  fit_nb2,
   type = "mle-mcmc",
   mcmc_warmup = 100, mcmc_iter = 200
 )
@@ -578,8 +598,8 @@ do_calc_index <- !file.exists(index_file)
 Next we will combine our models into a list so we can iterate over the list when we calculate the predicted bycatch total.
 
 ```{r models-list}
-models <- list(fit_nb2, fit_dg, fit_dl)
-names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma")
+models <- list(fit_nb2, fit_dg, fit_dl, fit_nb1)
+names(models) <- c("NB2", "Delta-lognormal", "Delta-Gamma", "NB1")
 ```
 
 Here we create a small function that predicts from our models onto the logbook data and passes those predictions through the `get_index()` function in sdmTMB.
@@ -678,7 +698,8 @@ left_join(ind, select(true, year, true = est)) |>
     covered = true < upr & true > lwr
   ) |>
   group_by(model) |>
-  summarise(coverage = mean(covered))
+  summarise(coverage = mean(covered)) |> 
+  arrange(-coverage)
 ```
 
 ```{r coverage50, eval=FALSE, echo=FALSE}
