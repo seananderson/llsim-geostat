@@ -1,8 +1,11 @@
 ---
 title: "LLSIM geostat"
 output:
-  bookdown::pdf_document2: default
-  bookdown::word_document2: default
+  bookdown::pdf_document2:
+    toc: false
+  bookdown::word_document2:
+    toc: false
+    reference_docx: template.docx
 highlight: "monochrome"
 csl: csas.csl
 bibliography: refs.bib
@@ -14,12 +17,12 @@ knit: (function(inputFile, encoding) {
   output_dir = ".", output_format = "all") })
 ---
 
-
 # Methods
 
 \newcommand{\s}{\boldsymbol{s}}
 
-We fit geostatistical models using the R package sdmTMB [@sdmTMB], which implements spatial and spatiotemporal predictive-process GLMMs using the SPDE (stochastic partial differential equation) approximation to Gaussian random fields. sdmTMB fits geostatistical models with maximum marginal likelihood calculated with TMB [Template Model Builder, @kristensen2016] and the Laplace approximation and uses an SPDE "mesh" constructed with the R package INLA [@lindgren2015].
+We fit geostatistical models using the R package sdmTMB [@sdmTMB], which implements spatial and spatiotemporal predictive-process GLMMs using the SPDE (stochastic partial differential equation) approximation to Gaussian random fields.
+sdmTMB fits geostatistical models with maximum marginal likelihood calculated with TMB [Template Model Builder, @kristensen2016] and the Laplace approximation and uses a "mesh" constructed with the R package INLA [@lindgren2015] for the SPDE approximation and bilinear interpolation.
 Previous work has shown that such an approach can improve the accuracy and precision of population indices from fisheries independent surveys [e.g., @thorson2015ices] and commercial CPUE [e.g., @gruss2019a].
 
 The general structure of the models is
@@ -37,29 +40,38 @@ O_{\s,t} +
 \end{aligned}
 $$
 
-where $y_{\s,t}$ represents blue marlin bycatch counts at coordinates $\s$ in space and time $t$, 
+where $y_{\s,t}$ represents blue marlin bycatch counts at coordinates $\s$ in space and time $t$,
 $\mu$ represents the mean,
-$f$ represents a link function and $f^{-1}$ represents its inverse, 
-$\bm{X}$ represents a design matrix, 
-$\bm{\beta}$ represents a vector of main-effect coefficients, 
-$O_{\s,t}$ represents an offset of log hook count, 
+$f$ represents a link function and $f^{-1}$ represents its inverse,
+$\bm{X}$ represents a design matrix,
+$\bm{\beta}$ represents a vector of main-effect coefficients,
+$O_{\s,t}$ represents an offset of log hook count,
 $\omega_{\bm{s}}$ represents a spatial Gaussian random field with mean zero and covariance $\bm{\Sigma}_\omega$, and
 $\epsilon_{\s,t}$ represents a spatiotemporal Gaussian random field with mean zero and covariance $\bm{\Sigma}_{\epsilon}$.
 For main effects, we used factor (categorical) predictors for year, season, and light-stick presence as well as a linear predictor for log hooks between floats.
 
 There are several ways these models can be configured.
 We evaluated four families: NB2, NB1, delta-gamma, and delta-lognormal.
-We initially tested the Tweedie distribution, but consistently had challenges with model convergence. We evaluated three random field configurations: (1) no random fields, (2) spatial random fields, and (3) spatial and spatiotemporal random fields with the spatiotemporal random fields being independent each year. Based on initial testing, we let the range parameter, which defines the distance at which spatial correlation has decayed to about 13%, be independent between the spatial and spatiotemporal random fields. We also allowed for spatial anisotropy [@fuglstad2015a; @thorson2015ices]: spatial correlation that varies with direction. Here, we shared the anisotropy properties between the spatial and spatiotemporal fields since they can be challenging to estimate.
+We initially tested the Tweedie distribution, but had challenges with model convergence unless the model was fit to CPUE instead of bycatch with an offset.
+We therefore excluded it here, but future work could include it.
+We evaluated three random field configurations: (1) no random fields, (2) spatial random fields, and (3) spatial and spatiotemporal random fields with the spatiotemporal random fields being independent each year. 
+Based on initial testing, we let the range parameter, which defines the distance at which spatial correlation has decayed to about 13%, be independent between the spatial and spatiotemporal random fields. 
+We also allowed for spatial anisotropy [@fuglstad2015a; @thorson2015ices]: spatial correlation that varies with direction. 
+Here, we shared the anisotropy properties between the spatial and spatiotemporal fields since they can be challenging to estimate.
 For sdmTMB, this means we used the arguments `anisotropy = TRUE, share_range = FALSE, spatial = "on",` and `spatiotemporal = "iid"` for our full spatiotemporal model; the anisotropy is by default shared but can be configured within `sdmTMBcontrol()` via the `map` argument.
 
-mesh details: cutoff of 5 and 3 TODO
-note convergence can be finicky with mesh here
+Geostatistical models are best fit in a coordinate space where distance is constant.
+For smaller spatial areas, UTMs are commonly used, but these datasets spanned well beyond one UTM zone introducing considerable distortion.
+Instead, we chose a custom Albers projection with reference longitudes at approximately 1/6 from the bottom and top of the data---future work could investigate the impact of this decision, but our initial observations suggest this had a minimal impact on model predictions.
+We fit out models with coordinates in 100 km units so that the spatial parameters were on an appropriate scale for estimation.
+We configured the mesh to have a 'cutoff' of 500 km for the full dataset and 300 km for the US-fleet data set, which means no triangle edge is allowed to be smaller than 500 or 300 km, respectively. 
+This mesh has approximately 250 triangle vertices or 'knots' for both datasets.
+Model convergence can be sensitive to the exact mesh configuration---a problem that can often be alleviated by increasing or reducing the mesh resolution or, more elegantly, applying penalized complexity priors [REF], which could be explored in future work (available within `sdmTMBpriors()` via `pc_matern()`).
 
-TODO projection Albers...
-
-A projection matrix $\boldsymbol{A}$ was used to bilinearly interpolate random field values at the triangle vertex locations ($\boldsymbol{\omega}^*$ and $\boldsymbol{\epsilon}^*$) to the values at the locations of the observed or predicted data [@lindgren2015]: $\boldsymbol{\omega}^* = \boldsymbol{A} \boldsymbol{\omega}$ and $\boldsymbol{\epsilon}^* = \boldsymbol{A} \boldsymbol{\epsilon}$. 
+sdmTMB uses a projection matrix $\boldsymbol{A}$, calculated through R-INLA, to bilinearly interpolate random field values at triangle vertex locations ($\boldsymbol{\omega}^*$ and $\boldsymbol{\epsilon}^*$) to the values at the locations of the observed or predicted data [@lindgren2015]: $\boldsymbol{\omega}^* = \boldsymbol{A} \boldsymbol{\omega}$ and $\boldsymbol{\epsilon}^* = \boldsymbol{A} \boldsymbol{\epsilon}$.
 The matrix $\boldsymbol{A}$ has a row for each data point and a column for each vertex defining the weight of the neighbouring three vertices.
-The negative marginal log likelihood was then minimized with the non-linear optimization routine `stats::nlminb()` in R [@gay1990; @r2021] followed by a Newton optimization routine `stats::optimHess()` in R [@r2021] to further reduce the likelihood gradients with respect to fixed effects if needed.
+
+sdmTMB minimizes the negative marginal log likelihood---calculated via TMB---with the non-linear optimization routine `stats::nlminb()` in R [@gay1990; @r2021] followed by a Newton optimization routine `stats::optimHess()` in R [@r2021] to further reduce the likelihood gradients with respect to fixed effects if needed.
 Using `sdmTMB::sanity()`, we assessed convergence by checking that the Hessian matrix was positive definite, that all gradients with respect to fixed effects were $<$ 0.001, and that no random field standard deviations were too small (< 0.01; suggesting the parameter had 'collapsed' to zero) among other checks.
 
 To derive predicted total bycatch on the logbook data, we predicted from our model on the logbook data and summed the predicted bycatch each year.
@@ -117,12 +129,12 @@ library(here)
 library(dplyr)
 ```
 
-```{r all-stats, results='asis', eval=TRUE}
+```{r all-stats, results='asis', eval=FALSE}
 ind_table <- readRDS(here("data-generated/ind-table.rds"))
 print_table <- function(dat, caption) {
   dat |> summarise(mare = median(abs(re)),
     # rmse = sqrt(mean(re^2)),
-    mre = mean(re), 
+    mre = mean(re),
     coverage = mean(true < upr & true > lwr)) |>
     ungroup() |>
     arrange(mare) |>
@@ -138,55 +150,55 @@ print_table <- function(dat, caption) {
 print_table(ind_table, caption = "Median absolute relative error (MARE), mean relative error (MRE), and 95\\% confidence interval coverage for geos statistical models with four families and three random field configurations. The models are sorted by MARE. Note that the precise values and the ordering, particularly between the families, is sensitive to the mesh configuration. However, the ordering of the fields in terms of MARE, MRE, and coverage is consistent: spatial and spatiotemporal fields is consistently the 'best', spatial fields is a close second, and no random fields is consistently the 'worst'.")
 ```
 
-```{r us-stats, results='asis', eval=TRUE}
+```{r us-stats, results='asis', eval=FALSE}
 ind_table_us <- readRDS(here("data-generated/ind-table-us.rds"))
 print_table(ind_table_us, caption = "Same as Table 1 but for the US fleet data only.")
 ```
 
-```{r compare-use, results='asis'}
-ind_table2 <- readRDS("data-generated/ind-table-us-compare.rds")
-# if (US) saveRDS(ind_table2, "data-generated/ind-table-us-compare.rds")
-ind_table2 |> group_by(model) |> 
-  summarise(
-    mare = median(abs(re)),
-    mre = mean(re), 
-    coverage = mean(true < upr & true > lwr)) |>
-  ungroup() |>
-  arrange(mare) |>
-  mutate(model = gsub("Spatial", "spatial", model)) |> 
-  mutate(model = gsub("Gamma", "gamma", model)) |> 
-  # mutate(fields = gsub(" fields", "", fields)) |>
-  # mutate(fields = gsub("No", "None", fields)) |>
-  knitr::kable(
-    digits = 2,
-    caption = "US fleet comparison",
-    booktabs = TRUE,
-    col.names = c("Model", "MARE", "MRE", "Coverage")
-  )
-```
-
 ```{r compare-all, results='asis'}
 ind_table2 <- readRDS("data-generated/ind-table-compare.rds")
-# if (US) saveRDS(ind_table2, "data-generated/ind-table-us-compare.rds")
-ind_table2 |> group_by(model) |> 
+ind_table2 |> group_by(model) |>
+  filter(!grepl("No fields", model)) |>
   summarise(
     mare = median(abs(re)),
-    mre = mean(re), 
+    mre = mean(re),
     coverage = mean(true < upr & true > lwr)) |>
   ungroup() |>
   arrange(mare) |>
-  mutate(model = gsub("Spatial", "spatial", model)) |> 
-  mutate(model = gsub("Gamma", "gamma", model)) |> 
+  mutate(model = gsub("Spatial", "spatial", model)) |>
+  mutate(model = gsub("Gamma", "gamma", model)) |>
   # mutate(fields = gsub(" fields", "", fields)) |>
   # mutate(fields = gsub("No", "None", fields)) |>
   knitr::kable(
     digits = 2,
-    caption = "All fleets comparison",
+    caption = "Median absolute relative error (MARE), mean relative error (MRE), and 95\\% confidence interval coverage for geostatistical models with four families and two random field configurations. The models are sorted by MARE. Note that, for the geostatistical models, the precise values and the ordering between the families is in some places sensitive to the mesh configuration. However, the ordering of the fields in terms of MARE, MRE, and coverage is consistent. Here, spatial and spatiotemporal fields is consistently the 'best', spatial fields is a close second, and no random fields is third.",
     booktabs = TRUE,
     col.names = c("Model", "MARE", "MRE", "Coverage")
   )
 ```
 
+```{r compare-use, results='asis'}
+ind_table2 <- readRDS("data-generated/ind-table-us-compare.rds")
+ind_table2 |>
+  filter(!grepl("No fields", model)) |>
+  group_by(model) |>
+  summarise(
+    mare = median(abs(re)),
+    mre = mean(re),
+    coverage = mean(true < upr & true > lwr)) |>
+  ungroup() |>
+  arrange(mare) |>
+  mutate(model = gsub("Spatial", "spatial", model)) |>
+  mutate(model = gsub("Gamma", "gamma", model)) |>
+  # mutate(fields = gsub(" fields", "", fields)) |>
+  # mutate(fields = gsub("No", "None", fields)) |>
+  knitr::kable(
+    digits = 2,
+    caption = "Same as Table 1 but for the US fleet only.",
+    booktabs = TRUE,
+    col.names = c("Model", "MARE", "MRE", "Coverage")
+  )
+```
 
 \clearpage
 
@@ -194,7 +206,7 @@ ind_table2 |> group_by(model) |>
 include_graphics(here("figs/mesh.png"))
 ```
 
-```{r aniso, fig.cap="Visualization of estimated anisotropy for the NB2 model. The ellipses indicate spatial and spatiotemporal range parameters in any direction. The range is the distance at which two data points are effectively independent (about 0.13 correlation). The ellipses are centered on 0 and the units are the units of the X and Y coordinates, which here are 100 km within the Albers projection. In this case, we observe considerable anisotropy with correlation decaying more quickly in an approximately latitudinal direction compared to an approximately longitudinal direction. We also estimated a larger spatial range than spatiotemporal range (sold vs. dotted line).", out.width="5in"}
+```{r aniso, fig.cap="Visualization of estimated anisotropy for the NB2 and delta-lognormal models. The ellipses indicate spatial and spatiotemporal range parameters in any direction from zero in the middle. The range is the distance at which two data points are effectively independent (about 0.13 correlation). The units are the units of the X and Y coordinates, which here are 100 km within the Albers projection. In this case, we observe considerable anisotropy with correlation decaying more quickly in an approximately latitudinal direction compared to an approximately longitudinal direction. We also estimated a larger spatial range than spatiotemporal range (sold vs. dotted line).", out.width="5in"}
 include_graphics(here("figs/dl-aniso.png"))
 ```
 
@@ -206,23 +218,23 @@ include_graphics(here("figs/qq.png"))
 include_graphics(here("figs/omega.png"))
 ```
 
-```{r eps, fig.cap="Spatiotemporal random field values for the NB2 model. These are deviations in link space and represent spatially correlated effects from latent variables not included in the model that change each year. Shown are six example years to save space. The model assumes these to be independent each year."}
+```{r eps, fig.cap="Spatiotemporal random field values for the NB2 model. These are deviations in link space and represent spatially correlated effects from latent variables not included in the model that change each year. Every second year is omitted here to save space. The model assumes these random effects to be independent each year."}
 include_graphics(here("figs/epsilon.png"))
 ```
 
-```{r all-pred, fig.cap="Overall prediction in space from the NB2 model for six example years."}
+```{r all-pred, fig.cap="Overall predictions in space from the NB2 model shown for every second year."}
 include_graphics(here("figs/dl-all-predicted.png"))
 ```
 
-```{r cv-spatial, fig.cap="The coefficient to variation (CV) on predicted bycatch in space from the NB2 spatiotemporal model for an example year. The spatial uncertainty looks similar across years. The mesh-pattern observed is a known artifact of the bilinear interpolation---the CV is most accurate at the triangle vertices and their connecting lines.", out.width="4in"}
+```{r cv-spatial, fig.cap="The coefficient to variation (CV) on predicted bycatch in space from the NB2 spatiotemporal model for an example year. The spatial uncertainty looks similar across years. The mesh-pattern observed in the CV is a known artifact of the bilinear interpolation---the prediction uncertainty is most accurate at the triangle vertices and their connecting lines.", out.width="4in"}
 include_graphics(here("figs/cv.png"))
 ```
 
-```{r all-ts, fig.cap="Total predicted blue marlin bycatch for four families (rows) and three random field configurations (columns) for the full dataset. The true total is shown with a dashed black line. For the models, lines represent mean estimates and ribbons represent 95\\% confidence intervals."}
+```{r all-ts, fig.cap="Total predicted blue marlin bycatch for four families (rows) and three random field configurations (columns) for the full dataset. The true total is shown with a dashed black line. For the model estimates, lines represent mean estimates and ribbons represent 95\\% confidence intervals."}
 include_graphics(here("figs/all-ts-comparison.png"))
 ```
 
-```{r us-ts, fig.cap="Total predicted blue marlin bycatch for four families (rows) and three random field configurations (columns) \\emph{for the US-fleet only}. The true total is shown with a dashed black line. For the models, lines represent mean estimates and ribbons represent 95\\% confidence intervals."}
+```{r us-ts, fig.cap="Total predicted blue marlin bycatch for four families (rows) and three random field configurations (columns) \\emph{for the US-fleet only}. The true total is shown with a dashed black line. For the model estimates, lines represent mean estimates and ribbons represent 95\\% confidence intervals."}
 include_graphics(here("figs/us-ts-comparison.png"))
 ```
 

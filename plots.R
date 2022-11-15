@@ -4,8 +4,8 @@ source("theme_sleek.R")
 theme_set(theme_sleek())
 dir.create("figs", showWarnings = FALSE)
 
-# US <- FALSE
-US <- TRUE
+US <- FALSE
+# US <- TRUE
 
 if (!US) {
   ind_st <- readRDS("data-generated/index-all-all-sp-on-st-iid-knots-300-share_range-FALSE.rds")
@@ -110,9 +110,10 @@ if (!US) ggsave("figs/all-ts-comparison.png", width = 8, height = 6)
 if (US) ggsave("figs/us-ts-comparison.png", width = 8, height = 6)
 
 fit_dl <- readRDS("data-generated/fit-all-dl-sp-on-st-iid-knots-300-share_range-FALSE.rds")
-# fit_dg <- readRDS("data-generated/fit-all-dg-sp-on-st-iid-knots-300-share_range-FALSE.rds")
-# fit_nb1 <- readRDS("data-generated/fit-all-nb1-sp-on-st-iid-knots-300-share_range-FALSE.rds")
+fit_dg <- readRDS("data-generated/fit-all-dg-sp-on-st-iid-knots-300-share_range-FALSE.rds")
+fit_nb1 <- readRDS("data-generated/fit-all-nb1-sp-on-st-iid-knots-300-share_range-FALSE.rds")
 fit_nb2 <- readRDS("data-generated/fit-all-nb2-sp-on-st-iid-knots-300-share_range-FALSE.rds")
+# fit_nb2 <- readRDS("data-generated/fit-us-nb2-sp-on-st-iid-knots-300-share_range-FALSE.rds")
 
 g1 <- sdmTMB::plot_anisotropy(fit_nb2) +
   theme_sleek() +
@@ -126,14 +127,14 @@ cowplot::plot_grid(g1,g2, nrow = 2L, align = "v")
 
 ggsave("figs/dl-aniso.png", width = 6, height = 4.2)
 
-fit_names <- c(
-  "fit-all-dl-sp-on-st-iid-knots-300-share_range-FALSE.rds",
-  "fit-all-dg-sp-on-st-iid-knots-300-share_range-FALSE.rds",
-  "fit-all-dl-sp-on-st-off-knots-300-share_range-TRUE.rds",
-  "fit-all-dg-sp-on-st-off-knots-300-share_range-TRUE.rds",
-  "fit-all-dl-sp-off-st-off-knots-300-share_range-TRUE.rds",
-  "fit-all-dg-sp-off-st-off-knots-300-share_range-TRUE.rds"
-)
+# fit_names <- c(
+#   "fit-all-dl-sp-on-st-iid-knots-300-share_range-FALSE.rds",
+#   "fit-all-dg-sp-on-st-iid-knots-300-share_range-FALSE.rds",
+#   "fit-all-dl-sp-on-st-off-knots-300-share_range-TRUE.rds",
+#   "fit-all-dg-sp-on-st-off-knots-300-share_range-TRUE.rds",
+#   "fit-all-dl-sp-off-st-off-knots-300-share_range-TRUE.rds",
+#   "fit-all-dg-sp-off-st-off-knots-300-share_range-TRUE.rds"
+# )
 
 # d <- tidy(fit_dl, effects = "ran_pars", model = 1, conf.int = TRUE)
 # ggplot(d, aes(estimate, y = term, xmin = conf.low,  xmax = conf.high)) +
@@ -228,13 +229,47 @@ ggsave("figs/mesh.png", width = 4, height = 4)
 
 theme_set(theme_sleek())
 
-set.seed(1)
-rdl <- data.frame(y = residuals(fit_dl))
-# set.seed(1)
-# rdg <- data.frame(y = residuals(fit_dg))
 
-g1 <- ggplot(rdl, aes(sample = y)) + stat_qq(alpha = 0.4) + stat_qq_line() +
+r <- list()
+s <- simulate(fit_nb2, nsim = 200)
+r[[1]] <- dharma_residuals(s, fit_nb2)
+
+s <- simulate(fit_nb1, nsim = 200)
+r[[2]] <- dharma_residuals(s, fit_nb1)
+
+s <- simulate(fit_dl, nsim = 200)
+r[[3]] <- dharma_residuals(s, fit_dl)
+
+s <- simulate(fit_dg, nsim = 200)
+r[[4]] <- dharma_residuals(s, fit_dg)
+
+names(r) <- c("NB2", "NB1", "Delta-lognormal", "Delta-gamma")
+rr <- bind_rows(r, .id = "Family")
+ggplot(rr, aes(expected, observed)) +
+  geom_point() +
+  coord_equal() +
+  facet_wrap(vars(Family), nrow = 2) +
+  geom_abline(slope = 1, intercept = 0)
+
+r <- list()
+set.seed(1)
+r[[1]] <- data.frame(y = residuals(fit_nb2))
+
+set.seed(1)
+r[[2]] <- data.frame(y = residuals(fit_nb1))
+
+set.seed(1)
+r[[3]] <- data.frame(y = residuals(fit_dl))
+
+set.seed(1)
+r[[4]] <- data.frame(y = residuals(fit_dg))
+
+names(r) <- c("NB2", "NB1", "Delta-lognormal", "Delta-gamma")
+rr <- bind_rows(r, .id = "Family")
+
+ggplot(rr, aes(sample = y)) + stat_qq(alpha = 0.4) + stat_qq_line() +
   coord_fixed() +
+  facet_wrap(vars(Family), nrow = 2) +
   labs(x = "Theoretical quantiles", y = "Sample quantiles") +
   theme_sleek()
   # ggtitle("Delta-Lognormal")
@@ -244,7 +279,7 @@ g1 <- ggplot(rdl, aes(sample = y)) + stat_qq(alpha = 0.4) + stat_qq_line() +
 #   ggtitle("Delta-Gamma")
 
 # cowplot::plot_grid(g1, g2, ncol = 2)
-ggsave("figs/qq.png", width = 3.7, height = 3.7)
+ggsave("figs/qq.png", width = 4.5, height = 4.5)
 
 fit <- fit_nb2
 grid_all <- readRDS("data-generated/grid_all.rds")
@@ -291,15 +326,18 @@ plot_map <- function(dat, column, label = "", nrow = NULL) {
 max_yr <- max(dlog$year)
 min_yr <- min(dlog$year)
 
-yrs <- seq(min_yr, max_yr, 5)
+# yrs <- seq(min_yr, max_yr, 5)
+yrs <- seq(min_yr, max_yr, 2)
+length(yrs)
 
 g <- p_grid |>
   filter(year %in% yrs) |>
   # plot_map(plogis(est1) * exp(est2), nrow = 2) +
-  plot_map(exp(est), nrow = 2) +
+  plot_map(exp(est), nrow = 3) +
   theme(legend.position = "bottom") +
   labs(fill = "Predicted blue marlin bycatch")
-ggsave("figs/dl-all-predicted.png", width = 8, height = 6)
+# ggsave("figs/dl-all-predicted.png", width = 8, height = 6)
+ggsave("figs/dl-all-predicted.png", width = 10, height = 7)
 
 g <- filter(grid_all, year %in% c(2000)) |> # pick one; very similar
   plot_map(column = cv) +
@@ -333,7 +371,7 @@ po <- p_grid |>
 ggsave("figs/omega.png", width = 6, height = 5)
 
 
-yrs <- seq(max_yr - 2, max_yr)
+# yrs <- seq(max_yr - 2, max_yr)
 # pe1 <- p_grid |>
 #   filter(year %in% yrs) |>
 #   plot_map(epsilon_st1, nrow = 1L) + rev_scale2 +
@@ -350,14 +388,15 @@ yrs <- seq(max_yr - 2, max_yr)
 # cowplot::plot_grid(pe1, pe2, nrow = 2L)
 # dev.off()
 
-yrs <- seq(min_yr, max_yr, 5)
+# yrs <- seq(min_yr, max_yr, 5)
 pe <- p_grid |>
   filter(year %in% yrs) |>
-  plot_map(epsilon_st, nrow = 2L) + rev_scale2 +
-  theme(legend.position = "right") +
+  plot_map(epsilon_st, nrow = 3L) + rev_scale2 +
+  theme(legend.position = "bottom") +
   # ggtitle("Spatiotemporal random effects") +
   labs(fill = "Deviation in\nlink space")
-ggsave("figs/epsilon.png", width = 8, height = 5.5)
+# ggsave("figs/epsilon.png", width = 8, height = 5.5)
+ggsave("figs/epsilon.png", width = 10, height = 7)
 
 
 # compare ----------------------
