@@ -19,26 +19,6 @@ Settings:
 print(params)
 ```
 
-# TODO
-
-- [x] add version without spatial/spatiotemporal for comparison
-- [x] add basic explanation below
-- [-] figure out nice figs for main writeup
-- [ ] compare to Beth's using same metrics?
-- [x] maybe take the time to run the spatiotemporal all models
-- [x] make projected plot not look laughable
-
-# Conclusion notes
-
-- Tweedie often doesn't converge here
-- seems to be strong anisotropy... but think about projection
-- coverage worse and metrics worse if no spatiotemporal or no fields at all
-- convergence can be finicky with properties of mesh! priors would help
-- exactly which family comes out on top is sensitive to the mesh
-- all decent families
-- just spatial gets you most of the way there
-- + spatiotemporal helps a bit and mostly with appropriate CI coverage
-
 # Analysis
 
 ```{r check-us, include=FALSE}
@@ -60,7 +40,7 @@ knitr::opts_chunk$set(
   fig.pos = "ht",
   cache.comments = TRUE,
   dev = "png",
-  dpi = 150, 
+  dpi = 150,
   cache.path = paste0(params$cache_path, "-cache/"),
   fig.path = paste0(params$cache_path, "-files/")
   # optipng = "-strip all"
@@ -106,16 +86,8 @@ dlog <- filter(dlog, fleet %in% params$fleets)
 The dataset we are starting with:
 
 ```{r print-data}
-select(dobs, year, month, lat, lon, gear, light, bait, fleet, hbf, hooks, season, bum) |> 
+select(dobs, year, month, lat, lon, gear, light, bait, fleet, hbf, hooks, season, bum) |>
   glimpse()
-```
-
-```{r filter-us, include=FALSE}
-# Explain large spatial outliers
-# if (us_version) {
-#   dobs <- filter(dobs, lon < 0, lat > -20)
-#   dlog <- filter(dlog, lon < 0, lat > -20)
-# }
 ```
 
 <!-- <https://desktop.arcgis.com/en/arcmap/latest/map/projections/equidistant-conic.htm> -->
@@ -189,10 +161,11 @@ map_data_cropped <- sf::st_crop(
   )
 )
 
-gg_coord <- coord_sf(expand = FALSE, crs = "WGS84",
-    xlim = c(range(dlog$lon) + c(-5, 5)),
-    ylim = c(range(dlog$lat) + c(-5, 5))
-  )
+gg_coord <- coord_sf(
+  expand = FALSE, crs = "WGS84",
+  xlim = c(range(dlog$lon) + c(-5, 5)),
+  ylim = c(range(dlog$lat) + c(-5, 5))
+)
 
 ggplot() +
   geom_sf(data = map_data_cropped, colour = "grey60", fill = "grey60") +
@@ -291,22 +264,25 @@ group_by(dobs, year) |>
   as.data.frame()
 ```
 
-
 ```{r filenames, echo=FALSE}
 file_name_maker <- function(type, fleet, family, sp, st, knots, share_range) {
   f <- paste(type, fleet, family, "sp", sp, "st", st, "knots", knots, "share_range", share_range, sep = "-")
   here::here("data-generated", paste0(f, ".rds"))
 }
 fleet <- if (us_version) "us" else "all"
-cache <- file_name_maker(type = 'cache', fleet = fleet, 
-  family = c(""), 
-  sp = 'on', st = params$spatiotemporal, knots = knots, share_range = params$share_range)
+cache <- file_name_maker(
+  type = "cache", fleet = fleet,
+  family = c(""),
+  sp = "on", st = params$spatiotemporal, knots = knots, share_range = params$share_range
+)
 ```
 
 ```{r cache-check, echo=FALSE}
-files <- file_name_maker(type = 'fit', fleet = fleet, 
-  family = c("nb2", "dg", "dl", "nb1"), 
-  sp = params$spatial, st = params$spatiotemporal, knots = knots, share_range = params$share_range)
+files <- file_name_maker(
+  type = "fit", fleet = fleet,
+  family = c("nb2", "dg", "dl", "nb1"),
+  sp = params$spatial, st = params$spatiotemporal, knots = knots, share_range = params$share_range
+)
 do_fit <- any(!file.exists(files))
 message(do_fit)
 ```
@@ -328,10 +304,6 @@ We will structure the model to use:
 
 We will then use the `update()` method to refit our model with three additional families: delta-Gamma and delta-lognormal and NB1 negative binomial (where variance scales linearly with the mean instead of quadratically).
 
-```{r cores}
-# TMB::openmp(n = 1L, DLL = "sdmTMB") # optional; use 3 cores
-```
-
 ```{r fit1, results='hide', eval=do_fit}
 tictoc::tic()
 fit_nb2 <- sdmTMB(
@@ -352,8 +324,8 @@ tictoc::toc()
 fit_nb1 <- update(fit_nb2, family = nbinom1())
 
 if (!us_version) {
-fit_dg <- update(fit_nb2, family = delta_gamma())
-fit_dl <- update(fit_nb2, family = delta_lognormal())
+  fit_dg <- update(fit_nb2, family = delta_gamma())
+  fit_dl <- update(fit_nb2, family = delta_lognormal())
 } else {
   fit_dl <- update(fit_nb2, family = delta_lognormal(), spatiotemporal = "off")
   fit_dg <- update(fit_nb2, family = delta_gamma(), spatiotemporal = "off")
@@ -405,7 +377,7 @@ A better assessment would be with cross validation with the `sdmTMB_cv()` functi
 However, this would take considerable time and we do not perform that here.
 
 ```{r aic}
-AIC(fit_nb2, fit_nb1, fit_dg, fit_dl) |> 
+AIC(fit_nb2, fit_nb1, fit_dg, fit_dl) |>
   arrange(AIC)
 ```
 
@@ -589,9 +561,11 @@ filter(grid_all, year %in% c(2000)) |> # pick one; very similar
 ```
 
 ```{r cache-check-index, echo=FALSE}
-index_file <- file_name_maker(type = 'index', fleet = fleet,
-  family = c("all"), 
-  sp = params$spatial, st = params$spatiotemporal, knots = knots, share_range = params$share_range)
+index_file <- file_name_maker(
+  type = "index", fleet = fleet,
+  family = c("all"),
+  sp = params$spatial, st = params$spatiotemporal, knots = knots, share_range = params$share_range
+)
 do_calc_index <- !file.exists(index_file)
 ```
 
@@ -631,18 +605,21 @@ Here we will calculate the true total bycatch and combine that data with our cal
 
 ```{r plot-indices-prep, echo=TRUE}
 true <- group_by(dlog, year) |>
-  summarize(swo = sum(swo), bum = sum(bum),
-    type = "simulated", model = "simulated")
+  summarize(
+    swo = sum(swo), bum = sum(bum),
+    type = "simulated", model = "simulated"
+  )
 true$est <- true[[params$species]]
 
 temp <- ind |>
   mutate(type = "predicted")
 
-temp <- temp |> group_by(model) |> 
+temp <- temp |>
+  group_by(model) |>
   mutate(
-    any_not_converged = 
+    any_not_converged =
       sum(is.infinite(upr)) > 0 | sum(lwr == 0) > 0
-    ) |> 
+  ) |>
   filter(!any_not_converged)
 
 temp <- temp |>
@@ -656,25 +633,31 @@ cols <- RColorBrewer::brewer.pal(length(models), "Dark2")
 names(cols) <- names(models)
 cols <- c(cols, c("simulated" = "#000000"))
 
-gg_scales <- list(scale_color_manual(values = cols),
+gg_scales <- list(
+  scale_color_manual(values = cols),
   scale_fill_manual(values = cols),
   scale_linetype_manual(values = c("predicted" = 1, "simulated" = 2)),
-  coord_cartesian(ylim = c(0, NA)))
+  coord_cartesian(ylim = c(0, NA))
+)
 
-gg_labs <- list(ylab("Bycatch total"),
+gg_labs <- list(
+  ylab("Bycatch total"),
   xlab("Year"),
-  labs(lty = "Type", colour = "Model", fill = "Model"))
+  labs(lty = "Type", colour = "Model", fill = "Model")
+)
 
 temp |>
-  filter(model != "simulated") |> 
+  filter(model != "simulated") |>
   ggplot(aes(year, est,
     ymin = lwr, ymax = upr, lty = type,
     colour = model, fill = model
   )) +
   geom_ribbon(alpha = 0.5, colour = NA) +
   geom_line() +
-  geom_line(data = true |> select(-model), lty = 2, colour = "black", 
-    inherit.aes = FALSE, mapping = aes(year, est)) +
+  geom_line(
+    data = true |> select(-model), lty = 2, colour = "black",
+    inherit.aes = FALSE, mapping = aes(year, est)
+  ) +
   gg_scales +
   gg_labs +
   facet_wrap(vars(model), scales = "free_y", nrow = 2)
@@ -698,13 +681,13 @@ left_join(ind, select(true, year, true = est)) |>
     covered = true < upr & true > lwr
   ) |>
   group_by(model) |>
-  summarise(coverage = mean(covered)) |> 
+  summarise(coverage = mean(covered)) |>
   arrange(-coverage)
 ```
 
 ```{r coverage50, eval=FALSE, echo=FALSE}
 left_join(ind, select(true, year, true = est)) |>
-  mutate(upr = exp(log_est + qnorm(0.75) * se), lwr = exp(log_est + qnorm(0.25) * se)) |> 
+  mutate(upr = exp(log_est + qnorm(0.75) * se), lwr = exp(log_est + qnorm(0.25) * se)) |>
   mutate(
     covered = true < upr & true > lwr
   ) |>
