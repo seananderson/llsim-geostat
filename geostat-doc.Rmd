@@ -132,10 +132,13 @@ library(dplyr)
 ```{r all-stats, results='asis', eval=FALSE}
 ind_table <- readRDS(here("data-generated/ind-table.rds"))
 print_table <- function(dat, caption) {
-  dat |> summarise(mare = median(abs(re)),
-    # rmse = sqrt(mean(re^2)),
-    mre = mean(re),
-    coverage = mean(true < upr & true > lwr)) |>
+  dat |>
+    summarise(
+      mare = median(abs(re)),
+      # rmse = sqrt(mean(re^2)),
+      mre = mean(re),
+      coverage = mean(true < upr & true > lwr)
+    ) |>
     ungroup() |>
     arrange(mare) |>
     mutate(fields = gsub(" fields", "", fields)) |>
@@ -157,12 +160,14 @@ print_table(ind_table_us, caption = "Same as Table 1 but for the US fleet data o
 
 ```{r compare-all, results='asis'}
 ind_table2 <- readRDS("data-generated/ind-table-compare.rds")
-ind_table2 |> group_by(model) |>
+ind_table2 |>
+  group_by(model) |>
   filter(!grepl("No fields", model)) |>
   summarise(
     mare = median(abs(re)),
     mre = mean(re),
-    coverage = mean(true < upr & true > lwr)) |>
+    coverage = mean(true < upr & true > lwr)
+  ) |>
   ungroup() |>
   arrange(mare) |>
   mutate(model = gsub("Spatial", "spatial", model)) |>
@@ -185,13 +190,12 @@ ind_table2 |>
   summarise(
     mare = median(abs(re)),
     mre = mean(re),
-    coverage = mean(true < upr & true > lwr)) |>
+    coverage = mean(true < upr & true > lwr)
+  ) |>
   ungroup() |>
   arrange(mare) |>
   mutate(model = gsub("Spatial", "spatial", model)) |>
   mutate(model = gsub("Gamma", "gamma", model)) |>
-  # mutate(fields = gsub(" fields", "", fields)) |>
-  # mutate(fields = gsub("No", "None", fields)) |>
   knitr::kable(
     digits = 2,
     caption = "Same as Table 1 but for the US fleet only.",
@@ -237,4 +241,3 @@ include_graphics(here("figs/all-ts-comparison.png"))
 ```{r us-ts, fig.cap="Total predicted blue marlin bycatch for four families (rows) and three random field configurations (columns) \\emph{for the US-fleet only}. The true total is shown with a dashed black line. For the model estimates, lines represent mean estimates and ribbons represent 95\\% confidence intervals."}
 include_graphics(here("figs/us-ts-comparison.png"))
 ```
-
