@@ -4,6 +4,13 @@ source("theme_sleek.R")
 theme_set(theme_sleek())
 dir.create("figs", showWarnings = FALSE)
 
+if (!require("sdmTMBextra", quietly = TRUE)) {
+  stop(
+    "Please install 'sdmTMBextra'.\n",
+    "`remotes::install_github('pbs-assess/sdmTMBextra')`"
+  )
+}
+
 US <- FALSE
 # US <- TRUE
 
