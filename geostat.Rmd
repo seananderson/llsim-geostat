@@ -58,8 +58,13 @@ theme_set(theme_light())
 ```{r read-dat, include=FALSE}
 dir.create("data-generated", showWarnings = FALSE)
 if (params$use_sets) {
-  dobs <- readr::read_csv("data-raw/obsset05.csv")
-  dlog <- readr::read_csv("data-raw/logset05.csv")
+  # dobs <- readr::read_csv("data-raw/obsset05.csv")
+  # saveRDS(dobs, file = "data-raw/obsset05.rds")
+  dobs <- readRDS("data-raw/obsset05.rds")
+  # dlog <- readr::read_csv("data-raw/logset05.csv")
+  # dlog <- select(dlog, year, month, lat, lon, gear, light, bait, fleet, hbf, hooks, season, c.BUM)
+  # saveRDS(dlog, file = "data-raw/logset05.rds")
+  dlog <- readRDS("data-raw/logset05.rds")
 } else {
   dobs <- readr::read_csv("data-raw/obstrip05.csv")
   dlog <- readr::read_csv("data-raw/logtrip05.csv")
@@ -69,9 +74,9 @@ names(dlog) <- tolower(names(dlog))
 
 if (params$use_sets) {
   dobs$bum <- dobs$c.bum
-  dobs$swo <- dobs$c.swo
+  # dobs$swo <- dobs$c.swo
   dlog$bum <- dlog$c.bum
-  dlog$swo <- dlog$c.swo
+  # dlog$swo <- dlog$c.swo
 }
 
 dobs$bycatch <- dobs[[params$species]]
@@ -153,13 +158,15 @@ map_data <- rnaturalearth::ne_countries(
   scale = "small",
   returnclass = "sf"
 )
-map_data_cropped <- sf::st_crop(
-  sf::st_make_valid(map_data),
-  c(
-    xmin = min(dlog$lon) - 20, ymin = min(dlog$lat) - 20,
-    xmax = max(dlog$lon) + 20, ymax = max(dlog$lat) + 20
-  )
-)
+# map_data_cropped <- sf::st_crop(
+#   sf::st_make_valid(map_data),
+#   c(
+#     xmin = min(dlog$lon) - 20, ymin = min(dlog$lat) - 20,
+#     xmax = max(dlog$lon) + 20, ymax = max(dlog$lat) + 20
+#   )
+# )
+
+map_data_cropped <- sf::st_make_valid(map_data)
 
 gg_coord <- coord_sf(
   expand = FALSE, crs = "WGS84",
@@ -229,10 +236,10 @@ Model accuracy will not necessarily improve with increased mesh resolution beyon
 
 ```{r mesh}
 knots <- 300
-mesh_all <- make_mesh(dlog, c("X", "Y"), n_knots = knots) # cutoff?
+# mesh_all <- make_mesh(dlog, c("X", "Y"), n_knots = knots)
 
-if (!us_version) mesh_all <- make_mesh(dlog, c("X", "Y"), cutoff = 5) # cutoff?
-if (us_version) mesh_all <- make_mesh(dlog, c("X", "Y"), cutoff = 3) # cutoff?
+if (!us_version) mesh_all <- make_mesh(dlog, c("X", "Y"), cutoff = 5)
+if (us_version) mesh_all <- make_mesh(dlog, c("X", "Y"), cutoff = 3)
 
 mesh <- make_mesh(dobs, c("X", "Y"), mesh = mesh_all$mesh)
 mesh$mesh$n
@@ -260,7 +267,7 @@ table(dobs$season_f)
 
 # make sure there aren't years with 100% or 0% observations:
 group_by(dobs, year) |>
-  summarise(pos_swo = mean(swo > 0), pos_bum = mean(bum > 0), n = n()) |>
+  summarise(pos_bum = mean(bum > 0), n = n()) |>
   as.data.frame()
 ```
 
@@ -323,6 +330,7 @@ fit_nb2 <- sdmTMB(
 tictoc::toc()
 fit_nb1 <- update(fit_nb2, family = nbinom1())
 
+tictoc::tic()
 if (!us_version) {
   fit_dg <- update(fit_nb2, family = delta_gamma())
   fit_dl <- update(fit_nb2, family = delta_lognormal())
@@ -330,6 +338,7 @@ if (!us_version) {
   fit_dl <- update(fit_nb2, family = delta_lognormal(), spatiotemporal = "off")
   fit_dg <- update(fit_nb2, family = delta_gamma(), spatiotemporal = "off")
 }
+tictoc::toc()
 ```
 
 ```{r saverds, eval=do_fit, echo=FALSE}
@@ -371,7 +380,7 @@ sanity(fit_dl)
 The `sanity()` method runs some basic checks and here does not detect any obvious issues.
 
 We can compare the AIC between the models. Here the delta-lognormal model has the lowest AIC.
-However, we should take these with a grain of salt given the extensive random effects included.
+However, we should take these with a grain of salt given the random effects included.
 
 A better assessment would be with cross validation with the `sdmTMB_cv()` function.
 However, this would take considerable time and we do not perform that here.
@@ -404,8 +413,8 @@ We also estimated larger spatial ranges than spatiotemporal ranges (sold vs. dot
 ```
 
 We can look at several types of residuals.
-The fast as to calculate or randomized quantile residuals with the parameters at their MLEs.
-However, these residuals have known problems and can indicate problems even when there are none.
+The fastest is to calculate randomized quantile residuals with the parameters at their MLEs.
+However, these residuals can indicate problems even when there are none.
 
 ```{r quant-resids, out.width="40%", fig.width=5, fig.asp=1}
 plot_resids <- function(x) {
@@ -443,7 +452,7 @@ r_mcmc <- residuals(
 )
 ```
 
-We can visualize the residuals in space:
+We can visualize the residuals in space (these are for the first model component if a delta model, we could add `model = 2` for the 2nd component):
 
 ```{r spatial-residuals}
 dobs$resid <- residuals(fit_dl)
