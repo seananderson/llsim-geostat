@@ -4,6 +4,6 @@
 
 `make.R` runs `geostat.Rmd` under various configurations and creates corresponding `.html` reports.
 
-`plots-nb2.R` creates several plots used in the report based on the cached output from running `make.R`.
+`plots.R` creates several plots used in the report based on the cached output from running `make.R`.
 
 `geostat-doc.Rmd` contains a first draft of a write-up describing the analysis and results.
