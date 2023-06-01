@@ -615,7 +615,7 @@ Here we will calculate the true total bycatch and combine that data with our cal
 ```{r plot-indices-prep, echo=TRUE}
 true <- group_by(dlog, year) |>
   summarize(
-    swo = sum(swo), bum = sum(bum),
+    bum = sum(bum),
     type = "simulated", model = "simulated"
   )
 true$est <- true[[params$species]]
